@@ -84,6 +84,7 @@ pub struct App {
     pub tools: crate::tools::Tools,
     pub gui: Mutex<Option<GuiProcess>>,
     pub gui_generation: std::sync::atomic::AtomicU64,
+    pub tray_changed: tokio::sync::Notify,
     pub token: String,
     pub endpoint: RwLock<String>,
     pub slots: tokio::sync::Semaphore,
@@ -140,7 +141,8 @@ impl App {
             status: RwLock::new(Status { state: "stopped".into(), detail: String::new(), device_id: String::new(),
                 verification_uri: String::new(), user_code: String::new(), updated_at: Utc::now().to_rfc3339() }),
             remote: Mutex::new(None), events: Mutex::new(VecDeque::new()), history_lock: Mutex::new(()),
-            shutdown: CancellationToken::new(), gui: Mutex::new(None), gui_generation:std::sync::atomic::AtomicU64::new(0), token: uuid::Uuid::new_v4().to_string(),
+            shutdown: CancellationToken::new(), gui: Mutex::new(None), gui_generation:std::sync::atomic::AtomicU64::new(0),
+            tray_changed:tokio::sync::Notify::new(),token: uuid::Uuid::new_v4().to_string(),
             endpoint: RwLock::new(String::new()), slots: tokio::sync::Semaphore::new(4), _lock: lock,
         });
         Ok(app)
@@ -150,6 +152,8 @@ impl App {
         let mut status = self.status.write().await;
         status.state = state.into(); status.detail = detail.into(); status.updated_at = Utc::now().to_rfc3339();
         tracing::info!(state, detail = %status.detail);
+        drop(status);
+        self.tray_changed.notify_one();
     }
 
     pub async fn event(&self, event: Value) {

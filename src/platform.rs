@@ -136,7 +136,20 @@ pub fn tray(app:std::sync::Arc<crate::app::App>,runtime:tokio::runtime::Handle) 
     use tao::{event::{Event,StartCause},event_loop::{ControlFlow,EventLoopBuilder}};
     use tao::platform::run_return::EventLoopExtRunReturn;
     use tray_icon::{TrayIconBuilder,Icon,menu::{Menu,MenuItem,PredefinedMenuItem,MenuEvent}};
-    let mut event_loop = EventLoopBuilder::new().build();
+    enum TrayEvent {State,Menu(MenuEvent)}
+    let mut event_loop = EventLoopBuilder::<TrayEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+    let menu_proxy = proxy.clone();
+    MenuEvent::set_event_handler(Some(move |event| {let _=menu_proxy.send_event(TrayEvent::Menu(event));}));
+    let observed = app.clone();
+    runtime.spawn(async move {
+        loop {
+            tokio::select! {
+                _=observed.tray_changed.notified()=>{if proxy.send_event(TrayEvent::State).is_err(){break;}}
+                _=observed.shutdown.cancelled()=>{let _=proxy.send_event(TrayEvent::State);break;}
+            }
+        }
+    });
     let menu = Menu::new();
     let status = MenuItem::new("正在启动",false,None);
     let open = MenuItem::new("打开管理界面",true,None);
@@ -150,12 +163,12 @@ pub fn tray(app:std::sync::Arc<crate::app::App>,runtime:tokio::runtime::Handle) 
     let icon = Icon::from_rgba(pixels,32,32)?; let mut tray = None;
     let mut previous = String::new();
     event_loop.run_return(move |event,_,control| {
-        *control = ControlFlow::WaitUntil(std::time::Instant::now()+std::time::Duration::from_millis(500));
+        *control = ControlFlow::Wait;
         if matches!(event,Event::NewEvents(StartCause::Init)) {
             tray = Some(TrayIconBuilder::new().with_icon(icon.clone()).with_menu(Box::new(menu.clone()))
                 .with_tooltip("Desktop Commander").build().expect("Unable to create status icon"));
         }
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
+        if let Event::UserEvent(TrayEvent::Menu(event)) = event {
             let app = app.clone();
             if event.id == open.id() { runtime.spawn(async move {if let Err(e) = app.open_gui().await {app.state("error",format!("{e:#}")).await;}}); }
             else if event.id == connect.id() { runtime.spawn(async move {app.start().await;}); }

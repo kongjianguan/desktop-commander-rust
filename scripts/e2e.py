@@ -23,10 +23,11 @@ from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work/e2e"
-EVIDENCE = ROOT / ".work/evidence"
+VARIANT = os.environ.get("DC_TEST_VARIANT","desktop")
+EVIDENCE = ROOT / ".work/evidence" / VARIANT
 BUNDLE = ROOT / ".work/bundle"
 EXE = Path(os.environ.get("DC_TEST_EXECUTABLE", BUNDLE / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")))
-REPORT = {"platform": platform.platform(), "commit":os.environ.get("GITHUB_SHA"), "passed":False, "cases": [], "artifacts": {}}
+REPORT = {"platform": platform.platform(), "variant":VARIANT, "commit":os.environ.get("GITHUB_SHA"), "passed":False, "cases": [], "artifacts": {}}
 
 
 def record(name, details=None):
@@ -57,7 +58,7 @@ async def mcp_flow():
             async with ClientSession(reader, writer) as client:
                 await client.initialize()
                 tools = await client.list_tools()
-                expected = json.loads((ROOT / "reference/tools.json").read_text())
+                expected = json.loads((ROOT / "reference/tools.json").read_text(encoding="utf-8"))
                 assert {tool.name for tool in tools.tools} == {tool["name"] for tool in expected}
                 record("MCP tool inventory", len(tools.tools))
                 for resource in (await client.list_resources()).resources:
@@ -204,7 +205,7 @@ def control_flow():
                 if descriptor.exists():
                     break
                 time.sleep(0.1)
-            connection = json.loads(descriptor.read_text())
+            connection = json.loads(descriptor.read_text(encoding="utf-8"))
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
             def request(path, method="GET", data=None, token=True):
@@ -233,7 +234,7 @@ def control_flow():
             request("/settings","PUT",settings)
             assert request("/status")["settings"]["deviceName"] == "E2E native device"
             exported = Path(request("/export","POST")["path"])
-            assert "access_token" not in exported.read_text()
+            assert "access_token" not in exported.read_text(encoding="utf-8")
             record("Real authenticated control API and persisted settings")
             process = psutil.Process(child.pid)
             samples = []

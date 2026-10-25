@@ -220,8 +220,10 @@ async fn connected(cloud: Arc<Cloud>, cancel: &CancellationToken) -> Result<()> 
     let mut url = reqwest::Url::parse(&format!("{}/realtime/v1/websocket",cloud.url))?;
     url.set_scheme("wss").map_err(|_|anyhow::anyhow!("Invalid WebSocket URL"))?;
     url.query_pairs_mut().append_pair("apikey",&cloud.key).append_pair("vsn","1.0.0");
-    let response = cloud.client.get(url).upgrade().send().await?;
-    let mut socket = response.into_websocket().await?;
+    let mut socket = tokio::time::timeout(Duration::from_secs(15),async {
+        let response = cloud.client.get(url).upgrade().send().await?;
+        Ok::<_,anyhow::Error>(response.into_websocket().await?)
+    }).await.context("Realtime WebSocket handshake timed out")??;
     let topic = format!("realtime:user:{}",cloud.user);
     let frame = |event:&str,payload:Value,reference:u64| json!({"topic":topic,"event":event,"payload":payload,"ref":reference.to_string(),"join_ref":"1"});
     socket.send(Message::Text(frame("phx_join",json!({"config":{"broadcast":{"ack":true,"self":false},

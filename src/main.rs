@@ -63,7 +63,7 @@ fn main() -> Result<()> {
         }
     });
     if matches!(cli.command, Some(Command::Stdio)) { return runtime.block_on(mcp::serve(app)); }
-    let headless = matches!(cli.command, Some(Command::Remote { headless: true }));
+    let headless = !cfg!(feature="tray") || matches!(cli.command, Some(Command::Remote { headless: true }));
     let running = app.clone();
     let background = runtime.spawn(async move {
         let result = control::serve(running.clone()).await;
@@ -71,8 +71,6 @@ fn main() -> Result<()> {
     });
     #[cfg(feature = "tray")]
     if !headless { platform::tray(app.clone(), runtime.handle().clone())?; }
-    #[cfg(not(feature = "tray"))]
-    if !headless { anyhow::bail!("This build has no tray support; use remote --headless"); }
     runtime.block_on(async {
         if headless { app.shutdown.cancelled().await; }
         app.shutdown.cancel();

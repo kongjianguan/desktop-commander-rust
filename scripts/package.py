@@ -75,7 +75,7 @@ def main():
             run("codesign","--force","--deep","--sign","-",application)
         run("codesign","--verify","--deep","--strict",application)
         subprocess.run([sys.executable,str(ROOT / "scripts/e2e.py")],check=True,
-            env={**os.environ,"DC_TEST_EXECUTABLE":str(executable / "desktop-commander")})
+            env={**os.environ,"DC_TEST_EXECUTABLE":str(executable / "desktop-commander"),"DC_TEST_VARIANT":"packaged"})
         image = packages / f"desktop-commander-{version}-{target}.dmg"
         run("hdiutil","create","-volname","Desktop Commander","-srcfolder",application.parent,"-ov","-format","UDZO",image)
         if signed and os.environ.get("APPLE_ID"):
@@ -107,6 +107,14 @@ def main():
     shutil.copy2(ROOT / "README.md",bundle / "README.md")
     archive_format = "zip" if "windows" in target else "gztar"
     shutil.make_archive(str(packages / f"desktop-commander-{version}-{target}"),archive_format,bundle)
+    agent = ROOT / ".work/headless" / target
+    agent.mkdir(parents=True,exist_ok=True)
+    suffix = ".exe" if "windows" in target else ""
+    shutil.copy2(bundle / f"desktop-commander-headless{suffix}",agent / f"desktop-commander{suffix}")
+    shutil.copytree(bundle / "resources",agent / "resources",dirs_exist_ok=True,symlinks=True)
+    shutil.copy2(ROOT / "LICENSE",agent / "LICENSE")
+    shutil.copy2(ROOT / "README.md",agent / "README.md")
+    shutil.make_archive(str(packages / f"desktop-commander-headless-{version}-{target}"),archive_format,agent)
     checksums = {file.name:hashlib.sha256(file.read_bytes()).hexdigest() for file in packages.iterdir() if file.is_file()}
     (packages / f"checksums-{target}.json").write_text(json.dumps(checksums,indent=2),encoding="utf-8")
     (packages / f"build-{target}.json").write_text(json.dumps({"version":version,"target":target,"signed":signed,

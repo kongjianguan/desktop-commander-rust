@@ -55,6 +55,20 @@ jobs:
           name: backend-${{ matrix.target }}
           path: .work/bundle/desktop-commander*
           include-hidden-files: true
+      - name: Build headless Rust agent
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          cargo build --locked --release --no-default-features
+          cp "target/release/desktop-commander${{ runner.os == 'Windows' && '.exe' || '' }}" ".work/bundle/desktop-commander-headless${{ runner.os == 'Windows' && '.exe' || '' }}"
+      - name: Verify Linux agent has no GTK linkage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p .work/evidence
+          ldd .work/bundle/desktop-commander-headless > .work/evidence/headless-linkage.txt
+          if rg 'libgtk|libgdk' .work/evidence/headless-linkage.txt; then exit 1; fi
       - name: Cache native resources
         uses: actions/cache@v4
         with:
@@ -65,6 +79,11 @@ jobs:
       - name: Install E2E dependencies
         run: python -m pip install mcp==1.20.0 pydantic==2.11.9 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.1.1 pillow==11.3.0 psutil==7.1.0
       - name: Verify real MCP and document operations
+        run: python scripts/e2e.py
+      - name: Verify headless agent end to end
+        env:
+          DC_TEST_EXECUTABLE: ${{ github.workspace }}/.work/bundle/desktop-commander-headless${{ runner.os == 'Windows' && '.exe' || '' }}
+          DC_TEST_VARIANT: headless
         run: python scripts/e2e.py
       - uses: subosito/flutter-action@v2
         with:
