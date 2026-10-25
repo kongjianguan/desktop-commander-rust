@@ -132,6 +132,19 @@ async def mcp_flow():
                 assert tail["discardedBytes"] >= 1024*1024
                 record("Bounded terminal output and incremental output after eviction")
 
+                unicode_code = "import sys,time;sys.stdout.buffer.write(bytes([228]));sys.stdout.flush();time.sleep(0.8);sys.stdout.buffer.write(bytes([184,173]));sys.stdout.flush();time.sleep(0.8);sys.stdout.buffer.write(bytes([228]));sys.stdout.flush()"
+                terminal = structured(await call("start_process",command=shell_command([sys.executable,"-u","-c",unicode_code]),timeout_ms=100))
+                output = terminal["output"]
+                assert "\ufffd" not in output
+                for _ in range(10):
+                    terminal = structured(await call("read_process_output",pid=terminal["pid"],timeout_ms=500))
+                    output += terminal["output"]
+                    if terminal["exitCode"] is not None:
+                        break
+                assert terminal["exitCode"] == 0 and output == "中\ufffd", (terminal,output)
+                assert structured(await call("read_process_output",pid=terminal["pid"]))["output"] == ""
+                record("UTF-8 streaming preserves split characters and consumes incomplete EOF")
+
                 docx = path / "report.docx"
                 await call("write_file", path=str(docx), content="Document E2E\nOriginal paragraph")
                 assert "Original paragraph" in "\n".join(p.text for p in Document(docx).paragraphs)

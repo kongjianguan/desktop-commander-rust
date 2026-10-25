@@ -122,7 +122,7 @@ impl Terminal {
     async fn wait(&self, session: &Session, timeout: u64,prompt_after:Option<u64>) {
         let deadline = Instant::now() + Duration::from_millis(timeout);
         while Instant::now() < deadline && session.exit.lock().await.is_none() {
-            if prompt_after.is_some_and(|sequence|session.sequence.load(std::sync::atomic::Ordering::Acquire)>sequence) && has_prompt(&session.output.lock().await) {break;}
+            if prompt_after.is_some_and(|sequence|session.sequence.load(std::sync::atomic::Ordering::Acquire)>sequence) && has_prompt(&*session.output.lock().await) {break;}
             let delay = deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(100));
             tokio::select! { _ = session.changed.notified() => {}, _ = tokio::time::sleep(delay) => {} }
         }
@@ -146,7 +146,8 @@ impl Terminal {
         let implicit = offset.is_none() || offset == Some(0);
         let begin = if implicit {cursor.saturating_sub(discarded).min(bytes.len())} else {0};
         let remaining=&bytes[begin..];
-        let valid=match std::str::from_utf8(remaining) {Err(error) if error.error_len().is_none()=>error.valid_up_to(),_=>remaining.len()};
+        let exit = *session.exit.lock().await;
+        let valid=match std::str::from_utf8(remaining) {Err(error) if exit.is_none() && error.error_len().is_none()=>error.valid_up_to(),_=>remaining.len()};
         let text = String::from_utf8_lossy(&remaining[..valid]);
         let lines: Vec<_> = text.split_inclusive('\n').collect();
         let start = match offset {
@@ -158,7 +159,6 @@ impl Terminal {
         let content = if start >= lines.len() { String::new() } else { lines[start..end].concat() };
         let consumed = if end == lines.len() {valid} else {lines[..end].iter().map(|line|line.len()).sum()};
         *cursor = discarded+begin+consumed;
-        let exit = *session.exit.lock().await;
         let blocked=exit.is_none()&&has_prompt(&output);
         let mut data=json!({"pid": pid, "output": content, "isBlocked":blocked,"isRunning":exit.is_none(), "exitCode": exit,
             "runtimeMs": session.started.elapsed().as_millis(), "totalLines": bytes.iter().filter(|&&c|c == b'\n').count()+usize::from(bytes.last().is_some_and(|&c|c != b'\n')),
