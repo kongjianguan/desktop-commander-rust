@@ -21,7 +21,7 @@ def main():
     executable = ROOT / ".work/bundle" / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")
     if sys.platform == "darwin":
         executable = ROOT / ".work/macos/Desktop Commander.app/Contents/MacOS/desktop-commander"
-    report = {"commit":os.environ.get("GITHUB_SHA"),"passed":False,"connected":False}
+    report = {"commit":os.environ.get("GITHUB_SHA"),"passed":False,"connected":False,"desktopHost":os.environ.get("XDG_CURRENT_DESKTOP",sys.platform)}
     with (EVIDENCE / "tray-stderr.log").open("w") as errors:
         child = subprocess.Popen([str(executable),"--config-dir",str(WORK),"remote"],stderr=errors)
         try:
@@ -79,6 +79,7 @@ def main():
                 samples.append(sample)
                 time.sleep(0.2)
             report["idleTrayMemory"] = {"metric":metric,"samplesBytes":samples,"maxMiB":max(samples)/1024**2}
+            assert max(samples) <= 50*1024**2,report["idleTrayMemory"]
             request("gui")
             second = find_gui()
             assert second.pid != first.pid

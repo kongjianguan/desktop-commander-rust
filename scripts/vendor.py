@@ -38,6 +38,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("target")
     parser.add_argument("--bundle", default=".work/bundle")
+    parser.add_argument("--metadata",type=Path)
     args = parser.parse_args()
     target = args.target
     windows = "windows" in target
@@ -85,6 +86,22 @@ def main():
         for item in (cache / component).rglob("*"):
             if item.is_file() and ("license" in item.name.lower() or "copyright" in item.name.lower()):
                 shutil.copy2(item, folder / item.name)
+    if args.metadata is not None:
+        dependencies = json.loads(args.metadata.read_text(encoding="utf-8"))["packages"]
+        rust_licenses = licenses / "rust"
+        rust_licenses.mkdir(exist_ok=True)
+        inventory = []
+        for package in dependencies:
+            source = Path(package["manifest_path"]).parent
+            destination = rust_licenses / f"{package['name']}-{package['version']}"
+            files = [item for item in source.iterdir() if item.is_file() and item.name.lower().startswith(("license","copying","notice"))]
+            if package.get("license_file"):
+                files.append(source / package["license_file"])
+            for item in files:
+                destination.mkdir(exist_ok=True)
+                shutil.copy2(item,destination / item.name)
+            inventory.append({"name":package["name"],"version":package["version"],"license":package["license"],"repository":package["repository"]})
+        (rust_licenses / "dependencies.json").write_text(json.dumps(inventory,indent=2),encoding="utf-8")
     if not windows:
         for item in binary.iterdir():
             item.chmod(0o755)
