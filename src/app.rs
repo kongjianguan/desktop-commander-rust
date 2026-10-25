@@ -86,19 +86,13 @@ pub fn private_dir(path: &Path) -> Result<()> {
 
 pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     use std::io::Write;
-    let temp = path.with_extension("pending");
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-    let mut file = options.open(&temp)?;
-    serde_json::to_writer(&mut file, value)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    #[cfg(windows)] {
-        // Windows 的替换操作由维护中的文件库执行。
-        if path.exists() { fs::remove_file(path)?; }
-    }
-    fs::rename(temp, path)?;
+    let bytes = serde_json::to_vec(value)?;
+    atomicwrites::AtomicFile::new(path,atomicwrites::OverwriteBehavior::AllowOverwrite).write(|file| {
+        file.write_all(&bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()
+    })?;
+    #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; fs::set_permissions(path,fs::Permissions::from_mode(0o600))?; }
     Ok(())
 }
 
@@ -179,7 +173,9 @@ impl App {
         let url = reqwest::Url::parse(&settings.server_url)?;
         if url.scheme() != "https" { bail!("Server URL must use HTTPS"); }
         if !settings.proxy.is_empty() { reqwest::Proxy::all(&settings.proxy)?; }
-        crate::platform::autostart(settings.start_at_login, &self.dir)?;
+        if settings.start_at_login != self.settings.read().await.start_at_login {
+            crate::platform::autostart(settings.start_at_login, &self.dir)?;
+        }
         atomic_json(&self.dir.join("settings.json"), &settings)?;
         *self.settings.write().await = settings;
         Ok(())

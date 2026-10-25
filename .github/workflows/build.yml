@@ -39,7 +39,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev ninja-build libclang-dev xvfb dbus-x11
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Build Rust
+        env:
+          CARGO_TERM_COLOR: never
         run: cargo build --release --features tray
       - name: Cache native resources
         uses: actions/cache@v4

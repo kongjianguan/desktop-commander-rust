@@ -68,7 +68,7 @@ def main():
     cmarker = resources / "cmarker"
     cmarker.mkdir(exist_ok=True)
     for name in ["lib.typ", "plugin.wasm", "LICENSE", "typst.toml"]:
-        item = fetch(f"https://raw.githubusercontent.com/typst/packages/main/packages/preview/cmarker/0.1.6/{name}", cache / "cmarker" / name)
+        item = fetch(f"https://raw.githubusercontent.com/typst/packages/02555ae3e8d9219403fe0b45cc710809e22835e1/packages/preview/cmarker/0.1.6/{name}", cache / "cmarker" / name)
         shutil.copy2(item, cmarker / name)
     fonts = resources / "fonts"
     fonts.mkdir(exist_ok=True)

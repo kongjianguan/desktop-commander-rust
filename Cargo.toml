@@ -11,6 +11,7 @@ tray = ["dep:tray-icon", "dep:tao"]
 
 [dependencies]
 anyhow = "1"
+atomicwrites = "0.4"
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
@@ -24,8 +25,9 @@ httpdate = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
 jsonschema = { version = "0.33", default-features = false }
 open = "5"
-pdfium-render = "=0.8.35"
+pdfium-render = { version = "=0.8.37", default-features = false, features = ["pdfium_7350", "thread_safe", "image"] }
 plist = "1"
+path-clean = "1"
 quick-xml = "0.38"
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "socks"] }
@@ -36,7 +38,9 @@ serde_json = "1"
 sha2 = "0.10"
 sysinfo = "0.37"
 tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["codec"] }
+pulldown-cmark = "0.13"
+pulldown-cmark-to-cmark = "21"
 tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

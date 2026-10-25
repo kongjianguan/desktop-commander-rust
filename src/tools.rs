@@ -2,6 +2,7 @@ use anyhow::{Result, Context, bail, ensure};
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use futures_util::StreamExt;
 
 pub struct Tools {
     pub terminal: crate::terminal::Terminal,
@@ -86,21 +87,13 @@ impl Tools {
                     return Ok(text(String::from_utf8(bytes)?));
                 }
                 let file = path("path")?;
-                if document(&file) { return crate::documents::invoke(app, "read_file", args).await; }
+                if document(&file) || image(&file) { return crate::documents::invoke(app, "read_file", args).await; }
                 let offset = args["offset"].as_i64().unwrap_or(0);
                 let length = number(args, "length", lines as u64).min(10_000) as usize;
-                if image(&file) {
-                    use base64::Engine;
-                    let bytes = tokio::fs::read(&file).await?;
-                    ensure!(bytes.len() <= 16 * 1024 * 1024, "Image exceeds 16 MiB");
-                    let image = image::load_from_memory(&bytes)?;
-                    let mut buffer = std::io::Cursor::new(Vec::new());
-                    image.thumbnail(2048, 2048).write_to(&mut buffer, image::ImageFormat::Png)?;
-                    return Ok(json!({"content":[{"type":"image","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(buffer.into_inner())}]}));
-                }
-                let mut reader = BufReader::new(tokio::fs::File::open(&file).await?).lines();
+                let mut reader = tokio_util::codec::FramedRead::new(tokio::fs::File::open(&file).await?,tokio_util::codec::LinesCodec::new_with_max_length(1024*1024));
                 let mut output = std::collections::VecDeque::new(); let mut index = 0usize; let mut bytes = 0usize;
-                while let Some(line) = reader.next_line().await? {
+                while let Some(line) = reader.next().await {
+                    let line = line?;
                     ensure!(line.len() <= 1024 * 1024, "Text line exceeds 1 MiB");
                     if offset < 0 { bytes += line.len(); output.push_back(line);
                         while output.len() > offset.unsigned_abs().min(10_000) as usize { bytes -= output.pop_front().unwrap().len(); }
@@ -147,7 +140,7 @@ impl Tools {
                 let updated = source.replace(old, string(args,"new_string")?);
                 let pending = file.with_extension(format!("{}.pending",uuid::Uuid::new_v4()));
                 tokio::fs::write(&pending,updated).await?; tokio::fs::set_permissions(&pending,tokio::fs::metadata(&file).await?.permissions()).await?;
-                tokio::fs::rename(pending,&file).await?;
+                atomicwrites::replace_atomic(&pending,&file)?;
                 Ok(result(json!({"path":file,"replacements":count})))
             }
             "create_directory" => { tokio::fs::create_dir_all(path("path")?).await?; Ok(text("Directory created")) }
@@ -201,7 +194,7 @@ impl Tools {
             "get_prompts" => {
                 let prompts: Value = serde_json::from_str(include_str!("../reference/onboarding-prompts.json"))?;
                 let id = string(args,"promptId")?;
-                let prompt = prompts.as_array().and_then(|items| items.iter().find(|p| p["id"] == id)).or_else(||prompts.get(id)).context("Unknown promptId")?;
+                let prompt = prompts["prompts"].as_array().and_then(|items| items.iter().find(|p| p["id"] == id)).context("Unknown promptId")?;
                 Ok(result(prompt.clone()))
             }
             "give_feedback_to_desktop_commander" => { open::that("https://desktopcommander.app/feedback")?; Ok(text("Feedback page opened")) }
@@ -216,6 +209,7 @@ pub fn checked_path(input: &str, config: &Value) -> Result<PathBuf> {
         directories::BaseDirs::new().context("Home directory unavailable")?.home_dir().join(input.trim_start_matches('~').trim_start_matches('/'))
     } else { PathBuf::from(input) };
     ensure!(path.is_absolute(), "An absolute path is required");
+    let path = path_clean::clean(path);
     if let Some(allowed) = config["allowedDirectories"].as_array().filter(|dirs| !dirs.is_empty()) {
         let mut ancestor = path.as_path();
         while !ancestor.exists() { ancestor = ancestor.parent().context("Invalid destination")?; }

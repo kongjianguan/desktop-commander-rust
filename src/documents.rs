@@ -34,10 +34,21 @@ pub fn worker() -> Result<()> {
         "docx" => docx(name,args,&path),
         "xlsx" => excel(name,args,&path),
         "pdf" => pdf(name,args,&path,Path::new(crate::tools::string(&input,"work")?),&input["tools"]),
+        "png"|"jpg"|"jpeg"|"gif"|"webp"|"bmp"|"tiff" => image(name,&path),
         _ => bail!("Unsupported document format"),
     }?;
     serde_json::to_writer(std::io::stdout().lock(),&result)?;
     Ok(())
+}
+
+fn image(name:&str,path:&Path) -> Result<Value> {
+    ensure!(name == "read_file","Unsupported image operation");
+    ensure!(path.metadata()?.len() <= 16*1024*1024,"Image exceeds 16 MiB");
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let mut limits = image::Limits::default(); limits.max_alloc = Some(128*1024*1024); reader.limits(limits);
+    let image = reader.decode()?.thumbnail(2048,2048);
+    let mut buffer = Cursor::new(Vec::new()); image.write_to(&mut buffer,image::ImageFormat::Png)?;
+    Ok(json!({"content":[{"type":"image","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(buffer.into_inner())}]}))
 }
 
 fn pretty_xml(source: &str) -> Result<String> {
@@ -90,10 +101,10 @@ fn docx(name: &str,args: &Value,path: &Path) -> Result<Value> {
         if let Some(bytes) = edits.get(entry.name()) {
             output.start_file(entry.name(),zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated))?;
             output.write_all(bytes)?;
-        } else { output.raw_copy_file(&mut entry)?; }
+        } else { output.raw_copy_file(entry)?; }
     }
     output.finish()?.sync_all()?; drop(archive);
-    std::fs::rename(pending,path)?;
+    atomicwrites::replace_atomic(&pending,path)?;
     Ok(crate::tools::result(json!({"success":true,"editsApplied":matches})))
 }
 
@@ -169,7 +180,7 @@ fn excel(name: &str,args: &Value,path: &Path) -> Result<Value> {
         write_cells(sheet,&args["content"],start_col,start_row)?;
     }
     let pending = path.with_extension(format!("{}.xlsx",uuid::Uuid::new_v4()));
-    umya_spreadsheet::writer::xlsx::write(&book,&pending)?; std::fs::rename(pending,path)?;
+    umya_spreadsheet::writer::xlsx::write(&book,&pending)?; atomicwrites::replace_atomic(&pending,path)?;
     Ok(crate::tools::text("Spreadsheet saved"))
 }
 
@@ -265,6 +276,6 @@ fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result
     }
     let destination: PathBuf = args["outputPath"].as_str().map(|p|crate::tools::checked_path(p,config)).transpose()?.unwrap_or_else(||path.to_owned());
     let pending = destination.with_extension(format!("{}.pdf",uuid::Uuid::new_v4())); document.save_to_file(&pending)?;
-    drop(document); std::fs::rename(pending,&destination)?;
+    drop(document); atomicwrites::replace_atomic(&pending,&destination)?;
     Ok(crate::tools::text("PDF saved"))
 }
