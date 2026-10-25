@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work/e2e"
 EVIDENCE = ROOT / ".work/evidence"
 BUNDLE = ROOT / ".work/bundle"
-EXE = BUNDLE / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")
+EXE = Path(os.environ.get("DC_TEST_EXECUTABLE", BUNDLE / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")))
 REPORT = {"platform": platform.platform(), "commit":os.environ.get("GITHUB_SHA"), "passed":False, "cases": [], "artifacts": {}}
 
 

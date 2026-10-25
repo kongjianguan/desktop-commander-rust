@@ -272,8 +272,7 @@ fn copy_directory(from: &Path,to: &Path) -> Result<()> {
 }
 
 fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result<Value> {
-    let resources = crate::platform::resources()?;
-    let pdfium = Pdfium::new(Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&resources))?);
+    let pdfium = Pdfium::new(Pdfium::bind_to_library(crate::platform::pdfium_library()?)?);
     if name == "write_file" || (name == "write_pdf" && args["content"].is_string()) {
         create_pdf(crate::tools::string(args,"content")?,&args["options"],path,work)?;
         return Ok(crate::tools::text("PDF generated"));

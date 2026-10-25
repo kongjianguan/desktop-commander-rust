@@ -1,19 +1,36 @@
 use anyhow::{Result, Context, ensure};
 use std::{path::{Path,PathBuf}, process::{Child,Command}};
 
+fn mac_contents() -> Result<Option<PathBuf>> {
+    let executable = std::env::current_exe()?;
+    let parent = executable.parent().context("Executable directory missing")?;
+    if cfg!(target_os="macos") && parent.file_name().is_some_and(|name|name == "MacOS") {
+        return Ok(Some(parent.parent().context("Application Contents missing")?.to_owned()));
+    }
+    Ok(None)
+}
 pub fn resources() -> Result<PathBuf> {
-    let dir = std::env::current_exe()?.parent().context("Executable directory missing")?.join("resources");
+    let dir = if let Some(contents) = mac_contents()? {contents.join("Resources")}
+        else {std::env::current_exe()?.parent().context("Executable directory missing")?.join("resources")};
     ensure!(dir.is_dir(),"Application resources missing: {}",dir.display()); Ok(dir)
 }
 pub fn bundled(name:&str) -> Result<PathBuf> {
     let name = if cfg!(windows) {format!("{name}.exe")} else {name.into()};
-    let path = resources()?.join("bin").join(name);
+    let path = if let Some(contents) = mac_contents()? {contents.join("Helpers").join(name)} else {resources()?.join("bin").join(name)};
     ensure!(path.is_file(),"Bundled executable missing: {}",path.display()); Ok(path)
 }
 pub fn gui_executable() -> Result<PathBuf> {
+    if let Some(contents) = mac_contents()? {
+        let path = contents.join("Helpers/Desktop Commander Control.app/Contents/MacOS/desktop_commander");
+        ensure!(path.is_file(),"Flutter control panel is missing: {}",path.display()); return Ok(path);
+    }
     let dir = std::env::current_exe()?.parent().context("Executable directory missing")?.join("desktop");
     let path = if cfg!(target_os="macos") {dir.join("Desktop Commander.app/Contents/MacOS/desktop_commander")} else if cfg!(windows) {dir.join("desktop_commander.exe")} else {dir.join("desktop_commander")};
     ensure!(path.is_file(),"Flutter control panel is missing: {}",path.display()); Ok(path)
+}
+pub fn pdfium_library() -> Result<PathBuf> {
+    if let Some(contents) = mac_contents()? {return Ok(contents.join("Frameworks/libpdfium.dylib"));}
+    Ok(resources()?.join(if cfg!(windows){"pdfium.dll"}else if cfg!(target_os="macos"){"libpdfium.dylib"}else{"libpdfium.so"}))
 }
 pub async fn wait_for_termination() -> Result<()> {
     #[cfg(unix)] {
