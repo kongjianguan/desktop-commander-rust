@@ -78,7 +78,7 @@ fn main() -> Result<()> {
         app.shutdown.cancel();
         app.stop().await?;
         app.tools.terminal.shutdown().await?;
-        if let Some(mut child) = app.gui.lock().await.take() { if child.try_wait()?.is_none() { child.kill().await?; } }
+        if let Some(gui) = app.gui.lock().await.take() {gui.cancel.cancel(); gui.task.await??;}
         background.await?;
         let descriptor = app.dir.join("control.json"); if descriptor.exists() { std::fs::remove_file(descriptor)?; }
         Ok(())

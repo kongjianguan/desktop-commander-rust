@@ -82,12 +82,17 @@ pub struct App {
     pub history_lock: Mutex<()>,
     pub shutdown: CancellationToken,
     pub tools: crate::tools::Tools,
-    pub gui: Mutex<Option<tokio::process::Child>>,
+    pub gui: Mutex<Option<GuiProcess>>,
     pub gui_generation: std::sync::atomic::AtomicU64,
     pub token: String,
     pub endpoint: RwLock<String>,
     pub slots: tokio::sync::Semaphore,
     _lock: File,
+}
+
+pub struct GuiProcess {
+    pub cancel:CancellationToken,
+    pub task:tokio::task::JoinHandle<Result<std::process::ExitStatus>>,
 }
 
 pub fn private_dir(path: &Path) -> Result<()> {
@@ -189,13 +194,26 @@ impl App {
 
     pub async fn open_gui(&self) -> Result<()> {
         let mut slot = self.gui.lock().await;
-        if let Some(child) = slot.as_mut() { if child.try_wait()?.is_none() {
+        if let Some(gui) = slot.as_ref() { if !gui.task.is_finished() {
             self.gui_generation.fetch_add(1,std::sync::atomic::Ordering::Relaxed); return Ok(());
         } }
+        if let Some(gui)=slot.take() {gui.task.await??;}
         let executable = crate::platform::gui_executable()?;
-        *slot = Some(tokio::process::Command::new(executable)
+        let mut child = tokio::process::Command::new(executable)
             .env("DC_DESCRIPTOR", self.dir.join("control.json"))
-            .kill_on_drop(true).spawn()?);
+            .kill_on_drop(true).spawn()?;
+        let cancel = self.shutdown.child_token();
+        let stopped = cancel.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                result=child.wait()=>Ok(result?),
+                _=stopped.cancelled()=>{
+                    if child.try_wait()?.is_none() {child.kill().await?;}
+                    Ok(child.wait().await?)
+                }
+            }
+        });
+        *slot = Some(GuiProcess {cancel,task});
         Ok(())
     }
 

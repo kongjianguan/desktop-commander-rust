@@ -25,6 +25,12 @@ impl Tools {
     pub fn new(dir: &Path) -> Result<Self> {
         let mut definitions: Vec<Value> = serde_json::from_str(include_str!("../reference/tools.json"))?;
         for tool in &mut definitions {
+            match tool["name"].as_str().context("Tool name missing")? {
+                "start_process" => tool["description"]=json!("Run a command using the selected local shell. Returns a PID, captured output, runtime and exit status. A process that exceeds timeout_ms remains available through read_process_output and interact_with_process. Maximum initial wait is 30 seconds."),
+                "get_config" => tool["description"]=json!("Read local tool configuration, platform details and editable configuration entries."),
+                "get_usage_stats" => tool["description"]=json!("Read the number of retained local tool history entries and application version."),
+                _=>{}
+            }
             if tool["name"] == "write_pdf" {
                 tool["description"] = json!("Generate PDF from CommonMark Markdown with native Typst typography, or insert/delete PDF pages. HTML/CSS and browser launch options are unsupported.");
                 tool["inputSchema"]["properties"]["options"] = json!({"type":"object", "additionalProperties":false,
@@ -202,7 +208,7 @@ impl Tools {
                 let prompt = prompts["prompts"].as_array().and_then(|items| items.iter().find(|p| p["id"] == id)).context("Unknown promptId")?;
                 Ok(result(prompt.clone()))
             }
-            "give_feedback_to_desktop_commander" => { open::that("https://desktopcommander.app/feedback")?; Ok(text("Feedback page opened")) }
+            "give_feedback_to_desktop_commander" => { open::that("https://tally.so/r/mKqoKg")?; Ok(text("Feedback page opened")) }
             "track_ui_event" => Ok(text("UI event received")),
             _ => bail!("Unknown tool: {name}"),
         }

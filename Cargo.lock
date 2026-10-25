@@ -756,6 +756,7 @@ dependencies = [
  "umya-spreadsheet",
  "uuid",
  "walkdir",
+ "windows-sys 0.61.2",
  "zip 4.6.1",
 ]
 

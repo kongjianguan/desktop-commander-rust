@@ -51,6 +51,9 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 tray-icon = { version = "0.21", optional = true }
 tao = { version = "0.34", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Power"] }
+
 [profile.release]
 opt-level = "s"
 lto = "thin"

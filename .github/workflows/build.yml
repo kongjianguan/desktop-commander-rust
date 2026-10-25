@@ -101,6 +101,12 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: python scripts/package.py ${{ matrix.target }}
+      - name: Verify packaged tray and Flutter lifecycle
+        if: runner.os != 'Linux'
+        run: python scripts/tray_e2e.py
+      - name: Verify packaged tray and Flutter lifecycle on Linux
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a python scripts/tray_e2e.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -125,6 +131,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/**/packages/*
+            artifacts/**/.work/packages/*
           generate_release_notes: true
           draft: true
