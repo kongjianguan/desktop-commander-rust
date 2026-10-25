@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,6 +30,26 @@ impl Default for Settings {
                 "allowedDirectories": [], "fileReadLineLimit": 1000, "fileWriteLineLimit": 1000,
                 "telemetryEnabled": false, "defaultEditorName": "", "defaultEditorPath": ""}),
         }
+    }
+}
+
+impl Settings {
+    pub fn validate(&self) -> Result<()> {
+        let url = reqwest::Url::parse(&self.server_url)?;
+        anyhow::ensure!(url.scheme() == "https","Server URL must use HTTPS");
+        if !self.proxy.is_empty() {reqwest::Proxy::all(&self.proxy)?;}
+        anyhow::ensure!(!self.device_name.trim().is_empty(),"Device name is empty");
+        let defaults = Self::default().tools;
+        let tools = self.tools.as_object().context("Tool settings must be an object")?;
+        for (key,value) in tools {
+            let default = defaults.get(key).context("Unknown tool setting")?;
+            anyhow::ensure!((default.is_array() && value.as_array().is_some_and(|array|array.iter().all(Value::is_string))) ||
+                (default.is_boolean() && value.is_boolean()) || (default.is_string() && value.is_string()) ||
+                (default.is_number() && value.as_u64().is_some_and(|n|n > 0 && n <= 10_000)),"Invalid setting: {key}");
+        }
+        for key in defaults.as_object().expect("Invalid default settings").keys() {anyhow::ensure!(tools.contains_key(key),"Missing setting: {key}");}
+        anyhow::ensure!(self.tools["telemetryEnabled"] == false,"Telemetry is unavailable");
+        Ok(())
     }
 }
 
@@ -107,7 +127,8 @@ impl App {
             if !path.exists() { return Ok(None); }
             Ok(Some(serde_json::from_reader(File::open(path)?)?))
         };
-        let settings = read("settings.json")?.map(serde_json::from_value).transpose()?.unwrap_or_default();
+        let settings:Settings = read("settings.json")?.map(serde_json::from_value).transpose()?.unwrap_or_default();
+        settings.validate()?;
         let session = read("session.json")?.map(serde_json::from_value).transpose()?;
         let app = Arc::new(Self {
             tools: crate::tools::Tools::new(&dir)?, dir, settings: RwLock::new(settings), session: RwLock::new(session),
@@ -179,9 +200,7 @@ impl App {
     }
 
     pub async fn set_settings(&self, settings: Settings) -> Result<()> {
-        let url = reqwest::Url::parse(&settings.server_url)?;
-        if url.scheme() != "https" { bail!("Server URL must use HTTPS"); }
-        if !settings.proxy.is_empty() { reqwest::Proxy::all(&settings.proxy)?; }
+        settings.validate()?;
         if settings.start_at_login != self.settings.read().await.start_at_login {
             crate::platform::autostart(settings.start_at_login, &self.dir)?;
         }

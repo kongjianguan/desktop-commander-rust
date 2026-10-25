@@ -49,8 +49,12 @@ impl Terminal {
         for pid in expired { sessions.remove(&pid); }
         ensure!(sessions.len() < 16, "Terminal session limit reached (16)");
         let mut builder = tokio::process::Command::new(shell);
-        if cfg!(windows) { builder.args(["-NoLogo", "-NoProfile", "-Command", command]); }
-        else { builder.args(["-c", command]); }
+        let name = std::path::Path::new(shell).file_name().context("Shell executable is missing")?.to_string_lossy().to_lowercase();
+        match name.as_str() {
+            "cmd.exe"|"cmd" => {builder.args(["/D","/S","/C",command]);}
+            "powershell.exe"|"powershell"|"pwsh.exe"|"pwsh" => {builder.args(["-NoLogo","-NoProfile","-Command",command]);}
+            _ => {builder.args(["-c",command]);}
+        }
         builder.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped()).kill_on_drop(true);
         #[cfg(unix)] { builder.process_group(0); }

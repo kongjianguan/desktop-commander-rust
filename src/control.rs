@@ -23,6 +23,7 @@ async fn status(State(app):State<Arc<App>>) -> Json<Value> {
 async fn start(State(app):State<Arc<App>>) -> ApiResult { app.start().await; Ok(Json(json!({"ok":true}))) }
 async fn stop(State(app):State<Arc<App>>) -> ApiResult { app.stop().await.map_err(failure)?; Ok(Json(json!({"ok":true}))) }
 async fn settings(State(app):State<Arc<App>>,Json(settings):Json<Settings>) -> ApiResult {
+    settings.validate().map_err(failure)?;
     let reconnect = app.remote.lock().await.as_ref().is_some_and(|(_,task)|!task.is_finished());
     app.stop().await.map_err(failure)?;
     app.set_settings(settings).await.map_err(failure)?;

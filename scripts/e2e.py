@@ -26,7 +26,7 @@ WORK = ROOT / ".work/e2e"
 EVIDENCE = ROOT / ".work/evidence"
 BUNDLE = ROOT / ".work/bundle"
 EXE = BUNDLE / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")
-REPORT = {"platform": platform.platform(), "cases": [], "artifacts": {}}
+REPORT = {"platform": platform.platform(), "commit":os.environ.get("GITHUB_SHA"), "passed":False, "cases": [], "artifacts": {}}
 
 
 def record(name, details=None):
@@ -243,6 +243,7 @@ def main():
     try:
         asyncio.run(mcp_flow())
         control_flow()
+        REPORT["passed"] = True
     finally:
         (EVIDENCE / "e2e.json").write_text(json.dumps(REPORT,ensure_ascii=False,indent=2),encoding="utf-8")
 

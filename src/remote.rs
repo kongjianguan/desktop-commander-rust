@@ -21,6 +21,7 @@ pub fn http_client(settings: &Settings) -> Result<reqwest::Client> {
 struct Cloud {
     app: Arc<App>, client: reqwest::Client, url: String, key: String, user: String,
     offset: AtomicI64,
+    next_refresh: tokio::sync::Mutex<Instant>,
 }
 
 impl Cloud {
@@ -48,10 +49,12 @@ impl Cloud {
         let response = self.client.post(format!("{}/auth/v1/token?grant_type=refresh_token",self.url))
             .header("apikey",&self.key).json(&json!({"refresh_token":session.refresh_token})).timeout(Duration::from_secs(15)).send().await?;
         self.observe(&response);
-        let status = response.status(); let body: Value = response.json().await?;
-        ensure!(status.is_success(),"Session refresh failed ({status}): {}",body["msg"]);
+        response.error_for_status_ref().context("Session refresh rejected; authorize the device again")?;
+        let body: Value = response.json().await?;
         self.app.save_session(Session { access_token: crate::tools::string(&body,"access_token")?.into(),
-            refresh_token:crate::tools::string(&body,"refresh_token")?.into(),device_id:session.device_id }).await
+            refresh_token:crate::tools::string(&body,"refresh_token")?.into(),device_id:session.device_id }).await?;
+        *self.next_refresh.lock().await = Instant::now()+Duration::from_secs(45*60);
+        Ok(())
     }
     async fn device(&self, online: bool) -> Result<()> {
         let session = self.app.session.read().await.clone().context("Session missing")?;
@@ -167,10 +170,13 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
         attempt += 1;
         tokio::select! { _ = cancel.cancelled() => return Ok(()), _ = tokio::time::sleep(Duration::from_secs((1u64 << attempt.min(5)).min(30))) => {} }
     };
-    if app.session.read().await.is_none() { authorize(&app,&client,&cancel).await?; }
+    let restored = app.session.read().await.is_some();
+    if !restored { authorize(&app,&client,&cancel).await?; }
     let session = app.session.read().await.clone().context("Session missing")?;
     let cloud = Arc::new(Cloud {app:app.clone(),client,url:crate::tools::string(&info,"supabaseUrl")?.trim_end_matches('/').into(),
-        key:crate::tools::string(&info,"supabasePublishableKey")?.into(),user:String::new(),offset:AtomicI64::new(0)});
+        key:crate::tools::string(&info,"supabasePublishableKey")?.into(),user:String::new(),offset:AtomicI64::new(0),
+        next_refresh:tokio::sync::Mutex::new(Instant::now()+Duration::from_secs(45*60))});
+    if restored {cloud.refresh().await?;}
     // 获取用户使用服务端验证，避免依赖设备本地时间判断 JWT 是否过期。
     let user = match cloud.request(reqwest::Method::GET,"/auth/v1/user",None).await {
         Ok(user) => user,
@@ -191,6 +197,9 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
     while !cancel.is_cancelled() {
         let result = connected(cloud.clone(),&cancel).await;
         if cancel.is_cancelled() { break; }
+        if result.as_ref().err().and_then(|e|e.downcast_ref::<reqwest::Error>()).and_then(|e|e.status()).is_some_and(|status|status.is_client_error() && status.as_u16() != 429) {
+            return result;
+        }
         if let Err(error) = cloud.device(false).await { tracing::warn!("Offline status could not be sent: {error:#}"); }
         attempt += 1;
         let detail = result.err().map(|e|format!("{e:#}")).unwrap_or_else(||"Connection closed".into());
@@ -204,6 +213,8 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
 }
 
 async fn connected(cloud: Arc<Cloud>, cancel: &CancellationToken) -> Result<()> {
+    let refresh_due = Instant::now() >= *cloud.next_refresh.lock().await;
+    if refresh_due {cloud.refresh().await?;}
     let session = cloud.app.session.read().await.clone().context("Session missing")?;
     let mut url = reqwest::Url::parse(&format!("{}/realtime/v1/websocket",cloud.url))?;
     url.set_scheme("wss").map_err(|_|anyhow::anyhow!("Invalid WebSocket URL"))?;
@@ -217,7 +228,7 @@ async fn connected(cloud: Arc<Cloud>, cancel: &CancellationToken) -> Result<()> 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(25)); heartbeat.tick().await;
     let mut database = tokio::time::interval(Duration::from_secs(300)); database.tick().await;
     let mut recovery = tokio::time::interval(Duration::from_secs(30)); recovery.tick().await;
-    let mut refresh = tokio::time::interval(Duration::from_secs(45*60)); refresh.tick().await;
+    let mut refresh = tokio::time::interval(Duration::from_secs(60)); refresh.tick().await;
     let mut watchdog = tokio::time::interval(Duration::from_secs(5));
     let mut last_ack = Instant::now(); let joined_at = Instant::now();
     let mut ready = false; let mut reference = 3u64;
@@ -267,6 +278,7 @@ async fn connected(cloud: Arc<Cloud>, cancel: &CancellationToken) -> Result<()> 
                     }
                 }
                 _ = refresh.tick() => {
+                    if Instant::now() < *cloud.next_refresh.lock().await {continue;}
                     cloud.refresh().await?;
                     reference += 1;
                     let token = cloud.app.session.read().await.as_ref().context("Session missing")?.access_token.clone();

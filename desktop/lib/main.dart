@@ -39,6 +39,7 @@ class _ControlPanelState extends State<ControlPanel> {
   Timer? _timer;
   Map<String, dynamic>? _snapshot;
   String? _error;
+  String? _pollError;
   String? _notice;
   bool _busy = false;
   bool _polling = false;
@@ -90,9 +91,9 @@ class _ControlPanelState extends State<ControlPanel> {
         _preventSleep = settings['preventSleep'] as bool;
         _startAtLogin = settings['startAtLogin'] as bool;
       }
-      setState(() { _snapshot = data; _error = null; });
+      setState(() { _snapshot = data; _pollError = null; });
     } catch (error) {
-      if (mounted) setState(() => _error = '$error');
+      if (mounted) setState(() => _pollError = '$error');
     } finally {
       _polling = false;
     }
@@ -100,7 +101,7 @@ class _ControlPanelState extends State<ControlPanel> {
 
   Future<void> _action(String path) async {
     if (_busy || _api == null) return;
-    setState(() { _busy = true; _notice = null; });
+    setState(() { _busy = true; _notice = null; _error = null; });
     try {
       final response = await _api!.request('POST', path);
       if (mounted && response['path'] != null) {
@@ -119,7 +120,7 @@ class _ControlPanelState extends State<ControlPanel> {
     settings.addAll({'deviceName': _name.text.trim(), 'proxy': _proxy.text.trim(),
       'noProxy': _noProxy.text.trim(), 'autoConnect': _autoConnect,
       'preventSleep': _preventSleep, 'startAtLogin': _startAtLogin});
-    setState(() => _busy = true);
+    setState(() { _busy = true; _error = null; });
     try {
       await _api!.request('PUT', '/settings', settings);
       _editing = false;
@@ -155,6 +156,7 @@ class _ControlPanelState extends State<ControlPanel> {
       'authorizing': '等待设备授权', 'reconnecting': '正在重新连接',
       'error': '连接发生错误', 'stopped': '远程连接已停止'};
     final events = (_snapshot?['events'] as List? ?? []).reversed.take(30).toList();
+    final error = _error ?? _pollError;
     return Scaffold(
       appBar: AppBar(title: const Text('Desktop Commander'),
         backgroundColor: Colors.transparent,
@@ -188,8 +190,8 @@ class _ControlPanelState extends State<ControlPanel> {
                   icon: const Icon(Icons.copy), label: const Text('复制授权链接')),
               ],
             ])),
-            if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 16),
-              child: Semantics(liveRegion: true, child: SelectableText(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)))),
+            if (error != null) Padding(padding: const EdgeInsets.only(bottom: 16),
+              child: Semantics(liveRegion: true, child: SelectableText(error, style: TextStyle(color: Theme.of(context).colorScheme.error)))),
             if (_notice != null) Padding(padding: const EdgeInsets.only(bottom: 16),
               child: Semantics(liveRegion: true, child: SelectableText(_notice!))),
             if (_snapshot != null) _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

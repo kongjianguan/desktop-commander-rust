@@ -32,10 +32,13 @@ impl Tools {
                     "margin":{"type":"string"},"font":{"type":"string"}}});
             }
         }
-        let validators = definitions.iter().map(|tool| {
+        let mut validators:HashMap<String,jsonschema::Validator> = definitions.iter().map(|tool| {
             let name = tool["name"].as_str().context("Tool name missing")?.to_owned();
             Ok((name, jsonschema::validator_for(&tool["inputSchema"])?))
         }).collect::<Result<_>>()?;
+        validators.insert("track_ui_event".into(),jsonschema::validator_for(&json!({"type":"object",
+            "required":["event"],"properties":{"event":{"type":"string","minLength":1,"maxLength":80},
+            "component":{"type":"string"},"params":{"type":"object"}},"additionalProperties":false}))?);
         Ok(Self { terminal: Default::default(), searches: crate::search::Searches::new(dir)?, definitions, validators,
             documents: tokio::sync::Semaphore::new(1) })
     }
