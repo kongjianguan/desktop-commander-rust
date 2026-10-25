@@ -103,21 +103,25 @@ impl Terminal {
         if timeout > 0 { self.wait(&session, timeout.min(30_000)).await; }
         let output = session.output.lock().await;
         let bytes: Vec<_> = output.iter().copied().collect();
-        let text = String::from_utf8_lossy(&bytes);
-        let lines: Vec<_> = text.lines().collect();
         let mut cursor = session.cursor.lock().await;
+        let discarded = session.discarded.load(std::sync::atomic::Ordering::Relaxed);
+        let implicit = offset.is_none() || offset == Some(0);
+        let begin = if implicit {cursor.saturating_sub(discarded).min(bytes.len())} else {0};
+        let text = String::from_utf8_lossy(&bytes[begin..]);
+        let lines: Vec<_> = text.split_inclusive('\n').collect();
         let start = match offset {
             Some(n) if n < 0 => lines.len().saturating_sub(n.unsigned_abs() as usize),
             Some(n) if n > 0 => n as usize,
-            _ => (*cursor).min(lines.len()),
+            _ => 0,
         };
         let end = start.saturating_add(length.min(10_000)).min(lines.len());
-        let content = if start >= lines.len() { String::new() } else { lines[start..end].join("\n") };
-        *cursor = end;
+        let content = if start >= lines.len() { String::new() } else { lines[start..end].concat() };
+        let consumed = if end == lines.len() {bytes.len()-begin} else {lines[..end].iter().map(|line|line.len()).sum()};
+        *cursor = discarded+begin+consumed;
         let exit = *session.exit.lock().await;
         Ok(json!({"pid": pid, "output": content, "isBlocked": exit.is_none(), "exitCode": exit,
-            "runtimeMs": session.started.elapsed().as_millis(), "totalLines": lines.len(),
-            "discardedBytes": session.discarded.load(std::sync::atomic::Ordering::Relaxed)}))
+            "runtimeMs": session.started.elapsed().as_millis(), "totalLines": bytes.iter().filter(|&&c|c == b'\n').count()+usize::from(bytes.last().is_some_and(|&c|c != b'\n')),
+            "discardedBytes": discarded}))
     }
 
     pub async fn interact(&self, pid: u32, input: &str, timeout: u64) -> Result<Value> {

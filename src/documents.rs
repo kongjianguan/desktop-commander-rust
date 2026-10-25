@@ -245,7 +245,7 @@ fn create_pdf(markdown: &str,options: &Value,output: &Path,work: &Path) -> Resul
     let mut command = std::process::Command::new(crate::platform::bundled("typst")?);
     command.arg("compile").arg("--root").arg(work.parent().context("Work parent missing")?)
         .arg("--font-path").arg(resources.join("fonts"));
-    command.arg("--input").arg(format!("source={}",source.display()));
+    command.arg("--input").arg(format!("source={}",source.file_name().context("Markdown filename missing")?.to_string_lossy()));
     if let Some(options) = options.as_object() {
         for (key,value) in options {
             ensure!(["pageWidth","pageHeight","margin","font"].contains(&key.as_str()),"Unsupported PDF option: {key}");

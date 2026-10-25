@@ -108,6 +108,13 @@ async def mcp_flow():
                 await call("force_terminate", pid=terminal["pid"])
                 await call("list_processes")
                 record("Real shell execution, stdin interaction and termination")
+                streaming_code = "import sys,time;sys.stdout.write('x'*2097152);sys.stdout.flush();time.sleep(1);print('stream-tail',flush=True)"
+                streaming = subprocess.list2cmdline([sys.executable,"-u","-c",streaming_code]) if os.name == "nt" else shlex.join([sys.executable,"-u","-c",streaming_code])
+                first = structured(await call("start_process", command=streaming, timeout_ms=500))
+                tail = structured(await call("read_process_output",pid=first["pid"],timeout_ms=2000))
+                assert "stream-tail" in first["output"]+tail["output"]
+                assert tail["discardedBytes"] >= 1024*1024
+                record("Bounded terminal output and incremental output after eviction")
 
                 docx = path / "report.docx"
                 await call("write_file", path=str(docx), content="Document E2E\nOriginal paragraph")
