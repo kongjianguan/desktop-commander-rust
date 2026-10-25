@@ -9,6 +9,8 @@ mod remote;
 mod tools;
 mod terminal;
 mod search;
+#[cfg(all(feature="tray",target_os="linux"))]
+mod linux_tray;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

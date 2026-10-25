@@ -36,7 +36,7 @@ jobs:
           python-version: '3.12'
       - name: Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev ninja-build libclang-dev xvfb dbus-x11
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev ninja-build libclang-dev xvfb dbus-x11 lxqt-panel openbox
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -125,7 +125,7 @@ jobs:
         run: python scripts/tray_e2e.py
       - name: Verify packaged tray and Flutter lifecycle on Linux
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run -a python scripts/tray_e2e.py
+        run: dbus-run-session -- xvfb-run -a python scripts/linux_desktop.py python scripts/tray_e2e.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -8,6 +8,7 @@ Rust 远程工具服务与按需启动的 Flutter 管理界面。
 通过状态栏菜单打开管理界面、连接或停止远程服务。关闭管理窗口后，Rust 继续运行。
 
 服务器使用单独提供的 `desktop-commander-headless` 压缩包。该程序默认以无界面方式运行，Linux 程序不依赖 GTK。
+Linux 状态栏使用 StatusNotifierItem，需要桌面环境提供相应的状态栏服务。
 
 ```sh
 desktop-commander remote --headless

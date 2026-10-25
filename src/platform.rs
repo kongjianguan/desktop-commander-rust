@@ -131,7 +131,12 @@ pub fn autostart(enabled:bool,dir:&Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature="tray")]
+#[cfg(all(feature="tray",target_os="linux"))]
+pub fn tray(app:std::sync::Arc<crate::app::App>,runtime:tokio::runtime::Handle) -> Result<()> {
+    runtime.block_on(crate::linux_tray::run(app,runtime.clone()))
+}
+
+#[cfg(all(feature="tray",not(target_os="linux")))]
 pub fn tray(app:std::sync::Arc<crate::app::App>,runtime:tokio::runtime::Handle) -> Result<()> {
     use tao::{event::{Event,StartCause},event_loop::{ControlFlow,EventLoopBuilder}};
     use tao::platform::run_return::EventLoopExtRunReturn;

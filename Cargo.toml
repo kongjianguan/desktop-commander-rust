@@ -2,12 +2,13 @@
 name = "desktop-commander"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.90"
 license = "MIT"
 description = "Remote desktop tools with an on-demand Flutter control panel"
 
 [features]
 default = []
-tray = ["dep:tray-icon", "dep:tao"]
+tray = ["dep:tray-icon", "dep:tao", "dep:ksni"]
 
 [dependencies]
 anyhow = "1"
@@ -48,8 +49,13 @@ umya-spreadsheet = "2.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
 zip = { version = "4", default-features = false, features = ["deflate"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = { version = "0.21", optional = true }
 tao = { version = "0.34", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.7", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Power"] }

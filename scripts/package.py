@@ -95,7 +95,7 @@ def main():
         install = deb / "opt/desktop-commander"
         shutil.copytree(bundle,install,dirs_exist_ok=True,symlinks=True)
         (deb / "DEBIAN").mkdir(parents=True,exist_ok=True)
-        (deb / "DEBIAN/control").write_text(f"Package: desktop-commander-rust\nVersion: {version}\nArchitecture: amd64\nMaintainer: Desktop Commander\nDepends: libgtk-3-0, libayatana-appindicator3-1, libxdo3\nDescription: Remote desktop tools and Flutter control panel\n")
+        (deb / "DEBIAN/control").write_text(f"Package: desktop-commander-rust\nVersion: {version}\nArchitecture: amd64\nMaintainer: Desktop Commander\nDepends: libgtk-3-0\nDescription: Remote desktop tools and Flutter control panel\n")
         launchers = deb / "usr/share/applications"
         launchers.mkdir(parents=True,exist_ok=True)
         (launchers / "desktop-commander.desktop").write_text("[Desktop Entry]\nType=Application\nName=Desktop Commander\nExec=/opt/desktop-commander/desktop-commander remote\nTerminal=false\nCategories=Utility;\n")
