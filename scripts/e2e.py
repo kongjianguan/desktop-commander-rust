@@ -43,6 +43,12 @@ def structured(response):
     return json.loads(response.content[0].text)
 
 
+def shell_command(arguments):
+    if os.name == "nt":
+        return "& " + " ".join("'"+argument.replace("'", "''")+"'" for argument in arguments)
+    return shlex.join(arguments)
+
+
 async def mcp_flow():
     config = WORK / "stdio-config"
     parameters = StdioServerParameters(command=str(EXE), args=["--config-dir", str(config), "stdio"])
@@ -96,10 +102,16 @@ async def mcp_flow():
                 await call("stop_search", sessionId=search_id)
                 record("Real ripgrep search and pagination")
 
-                command = subprocess.list2cmdline([sys.executable,"-u","-c","print('terminal-e2e')"]) if os.name == "nt" else shlex.join([sys.executable,"-u","-c","print('terminal-e2e')"])
+                command = shell_command([sys.executable,"-u","-c","print('terminal-e2e')"])
                 terminal = structured(await call("start_process", command=command, timeout_ms=2000))
-                assert "terminal-e2e" in terminal["output"]
-                interactive = subprocess.list2cmdline([sys.executable,"-u","-c","print(input(), flush=True)"]) if os.name == "nt" else shlex.join([sys.executable,"-u","-c","print(input(), flush=True)"])
+                output = terminal["output"]
+                for _ in range(30):
+                    if terminal["exitCode"] is not None:
+                        break
+                    terminal = structured(await call("read_process_output",pid=terminal["pid"],timeout_ms=1000))
+                    output += terminal["output"]
+                assert "terminal-e2e" in output, terminal
+                interactive = shell_command([sys.executable,"-u","-c","print(input(), flush=True)"])
                 terminal = structured(await call("start_process", command=interactive, timeout_ms=100))
                 response = structured(await call("interact_with_process", pid=terminal["pid"], input="interactive-e2e", timeout_ms=2000))
                 assert "interactive-e2e" in response["output"]
@@ -109,7 +121,7 @@ async def mcp_flow():
                 await call("list_processes")
                 record("Real shell execution, stdin interaction and termination")
                 streaming_code = "import sys,time;sys.stdout.write('x'*2097152);sys.stdout.flush();time.sleep(1);print('stream-tail',flush=True)"
-                streaming = subprocess.list2cmdline([sys.executable,"-u","-c",streaming_code]) if os.name == "nt" else shlex.join([sys.executable,"-u","-c",streaming_code])
+                streaming = shell_command([sys.executable,"-u","-c",streaming_code])
                 first = structured(await call("start_process", command=streaming, timeout_ms=500))
                 tail = structured(await call("read_process_output",pid=first["pid"],timeout_ms=2000))
                 assert "stream-tail" in first["output"]+tail["output"]
@@ -143,10 +155,14 @@ async def mcp_flow():
                 record("XLSX real write, range edit, append and types")
 
                 pdf = path / "report.pdf"
-                await call("write_pdf", path=str(pdf), content="# PDF E2E\n\nNative typography test.\n\n中文排版验证。", options={"margin":"18mm"})
+                png = path / "image.png"
+                Image.new("RGB",(120,80),(90,100,180)).save(png)
+                await call("write_pdf", path=str(pdf), content="# PDF E2E\n\nNative typography test.\n\n中文排版验证。\n\n![image](image.png)", options={"margin":"18mm"})
                 reader = PdfReader(pdf)
                 assert "Native typography" in reader.pages[0].extract_text()
-                await call("read_file", path=str(pdf), offset=0, length=1)
+                assert len(reader.pages[0].images) > 0
+                extracted = await call("read_file", path=str(pdf), offset=0, length=1)
+                assert any(content.type == "image" for content in extracted.content)
                 await call("write_pdf", path=str(pdf), content=[{"type":"insert","pageIndex":1,"markdown":"Inserted page"}])
                 assert len(PdfReader(pdf).pages) == 2
                 await call("write_pdf", path=str(pdf), content=[{"type":"delete","pageIndexes":[0]}])
@@ -155,8 +171,6 @@ async def mcp_flow():
                 await call("get_file_info", path=str(pdf))
                 record("Native PDF creation, extraction, insertion and deletion")
 
-                png = path / "image.png"
-                Image.new("RGB",(120,80),(90,100,180)).save(png)
                 response = await call("read_file", path=str(png))
                 assert response.content[0].type == "image"
                 record("Image decoding and MCP image response")
@@ -210,6 +224,10 @@ def control_flow():
             assert unauthorized
             status = request("/status")
             assert status["status"]["state"] == "stopped"
+            duplicate = subprocess.run([str(EXE),"--config-dir",str(config),"remote","--headless"],capture_output=True,timeout=10)
+            assert duplicate.returncode != 0
+            assert request("/status")["pid"] == child.pid
+            record("Single instance rejects a duplicate headless process")
             settings = status["settings"]
             settings["deviceName"] = "E2E native device"
             request("/settings","PUT",settings)
@@ -231,6 +249,23 @@ def control_flow():
             assert child.returncode == 0
             assert not descriptor.exists()
             record("Clean shutdown and descriptor cleanup")
+            if os.name != "nt":
+                restarted = subprocess.Popen([str(EXE),"--config-dir",str(config),"remote","--headless"],stderr=errors)
+                try:
+                    for _ in range(100):
+                        if descriptor.exists():
+                            break
+                        time.sleep(0.1)
+                    assert descriptor.exists()
+                    restarted.terminate()
+                    restarted.wait(timeout=10)
+                    assert restarted.returncode == 0
+                    assert not descriptor.exists()
+                    record("SIGTERM performs graceful cleanup")
+                finally:
+                    if restarted.poll() is None:
+                        restarted.kill()
+                        restarted.wait()
         finally:
             if child.poll() is None:
                 child.kill()

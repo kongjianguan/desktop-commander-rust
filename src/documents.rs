@@ -60,7 +60,7 @@ async fn prepare_markdown(app:&Arc<crate::app::App>,markdown:&str,base:&Path,wor
             };
             let name = format!("asset-{}",uuid::Uuid::new_v4());
             tokio::fs::write(work.join(&name),bytes).await?;
-            *dest_url = name.into();
+            *dest_url = format!("../{name}").into();
         }
     }
     let mut normalized = String::new();

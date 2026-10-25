@@ -37,7 +37,11 @@ impl ServerHandler for Server {
 
 pub async fn serve(app:Arc<crate::app::App>) -> anyhow::Result<()> {
     let service = Server(app.clone()).serve(rmcp::transport::stdio()).await?;
-    service.waiting().await?;
+    let cancel = service.cancellation_token();
+    tokio::select! {
+        result=service.waiting()=>{result?;}
+        _=app.shutdown.cancelled()=>{cancel.cancel();}
+    }
     app.tools.terminal.shutdown().await?;
     Ok(())
 }

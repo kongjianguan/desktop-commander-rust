@@ -15,6 +15,14 @@ pub fn gui_executable() -> Result<PathBuf> {
     let path = if cfg!(target_os="macos") {dir.join("Desktop Commander.app/Contents/MacOS/desktop_commander")} else if cfg!(windows) {dir.join("desktop_commander.exe")} else {dir.join("desktop_commander")};
     ensure!(path.is_file(),"Flutter control panel is missing: {}",path.display()); Ok(path)
 }
+pub async fn wait_for_termination() -> Result<()> {
+    #[cfg(unix)] {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {result=tokio::signal::ctrl_c()=>result?, _=term.recv()=>{}}
+    }
+    #[cfg(windows)] {tokio::signal::ctrl_c().await?;}
+    Ok(())
+}
 pub fn kill_tree(pid:u32) -> Result<()> {
     ensure!(pid > 1 && pid != std::process::id(),"Refusing to terminate this process or PID 1");
     #[cfg(windows)] {

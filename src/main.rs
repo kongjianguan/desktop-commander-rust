@@ -52,6 +52,16 @@ fn main() -> Result<()> {
     if matches!(cli.command, Some(Command::Logout)) {
         let path = app.dir.join("session.json"); if path.exists() { std::fs::remove_file(path)?; } return Ok(());
     }
+    let signals = app.clone();
+    runtime.spawn(async move {
+        tokio::select! {
+            result=platform::wait_for_termination()=> {
+                if let Err(error)=result {tracing::error!("Signal handler failed: {error:#}");}
+                signals.shutdown.cancel();
+            }
+            _=signals.shutdown.cancelled()=>{}
+        }
+    });
     if matches!(cli.command, Some(Command::Stdio)) { return runtime.block_on(mcp::serve(app)); }
     let headless = matches!(cli.command, Some(Command::Remote { headless: true }));
     let running = app.clone();
@@ -64,7 +74,7 @@ fn main() -> Result<()> {
     #[cfg(not(feature = "tray"))]
     if !headless { anyhow::bail!("This build has no tray support; use remote --headless"); }
     runtime.block_on(async {
-        if headless { tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = app.shutdown.cancelled() => {} } }
+        if headless { app.shutdown.cancelled().await; }
         app.shutdown.cancel();
         app.stop().await?;
         app.tools.terminal.shutdown().await?;

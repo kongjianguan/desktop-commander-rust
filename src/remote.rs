@@ -136,7 +136,7 @@ async fn authorize(app: &Arc<App>, client: &reqwest::Client, cancel: &Cancellati
     let mut interval = crate::tools::number(&response,"interval",5).max(1);
     let deadline = Instant::now() + Duration::from_secs(crate::tools::number(&response,"expires_in",600));
     while Instant::now() < deadline {
-        tokio::select! { _ = cancel.cancelled() => bail!("Authorization cancelled"), _ = tokio::time::sleep(Duration::from_secs(interval)) => {} }
+        tokio::select! { _ = cancel.cancelled() => return Ok(()), _ = tokio::time::sleep(Duration::from_secs(interval)) => {} }
         let response = client.post(format!("{}/device/poll",settings.server_url))
             .json(&json!({"client_id":"mcp-device","device_code":response["device_code"],"code_verifier":verifier}))
             .timeout(Duration::from_secs(15)).send().await?;
@@ -172,6 +172,7 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
     };
     let restored = app.session.read().await.is_some();
     if !restored { authorize(&app,&client,&cancel).await?; }
+    if cancel.is_cancelled() {return Ok(());}
     let session = app.session.read().await.clone().context("Session missing")?;
     let cloud = Arc::new(Cloud {app:app.clone(),client,url:crate::tools::string(&info,"supabaseUrl")?.trim_end_matches('/').into(),
         key:crate::tools::string(&info,"supabasePublishableKey")?.into(),user:String::new(),offset:AtomicI64::new(0),

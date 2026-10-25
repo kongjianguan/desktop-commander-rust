@@ -27,6 +27,7 @@ def main():
     bundle = ROOT / ".work/bundle"
     packages = ROOT / ".work/packages"
     packages.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / ".work/flutter-e2e/result.json",ROOT / ".work/evidence/flutter-e2e.json")
     desktop = bundle / "desktop"
     desktop.mkdir(exist_ok=True)
     signed = False
