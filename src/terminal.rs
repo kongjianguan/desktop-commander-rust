@@ -54,6 +54,7 @@ impl Terminal {
         builder.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped()).kill_on_drop(true);
         #[cfg(unix)] { builder.process_group(0); }
+        #[cfg(windows)] { builder.creation_flags(0x08000000); }
         let mut child = builder.spawn().context("Unable to start shell")?;
         let pid = child.id().context("Process has no PID")?;
         let session = Arc::new(Session { pid, command: command.into(), started: Instant::now(),

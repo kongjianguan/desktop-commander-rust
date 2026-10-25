@@ -282,6 +282,6 @@ async fn connected(cloud: Arc<Cloud>, cancel: &CancellationToken) -> Result<()> 
         Ok(())
     }.await;
     while let Some(task) = tasks.join_next().await { if let Err(error) = task? { tracing::error!("Remote call failed: {error:#}"); } }
-    let _ = socket.close().await;
+    let _ = SinkExt::close(&mut socket).await;
     result
 }

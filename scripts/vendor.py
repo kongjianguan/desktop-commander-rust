@@ -55,7 +55,8 @@ def main():
     typst = fetch(f"https://github.com/typst/typst/releases/download/v0.13.1/{typst_asset}", cache / typst_asset)
     unpack(typst, cache / "typst")
     shutil.copy2(next((cache / "typst").rglob(f"typst{suffix}")), binary / f"typst{suffix}")
-    rg_asset = f"ripgrep-14.1.1-{target}.{'zip' if windows else 'tar.gz'}"
+    rg_target = target if mac or windows else "x86_64-unknown-linux-musl"
+    rg_asset = f"ripgrep-14.1.1-{rg_target}.{'zip' if windows else 'tar.gz'}"
     rg = fetch(f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/{rg_asset}", cache / rg_asset)
     unpack(rg, cache / "ripgrep")
     shutil.copy2(next((cache / "ripgrep").rglob(f"rg{suffix}")), binary / f"rg{suffix}")

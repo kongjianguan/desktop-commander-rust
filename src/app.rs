@@ -63,6 +63,7 @@ pub struct App {
     pub shutdown: CancellationToken,
     pub tools: crate::tools::Tools,
     pub gui: Mutex<Option<tokio::process::Child>>,
+    pub gui_generation: std::sync::atomic::AtomicU64,
     pub token: String,
     pub endpoint: RwLock<String>,
     pub slots: tokio::sync::Semaphore,
@@ -113,7 +114,7 @@ impl App {
             status: RwLock::new(Status { state: "stopped".into(), detail: String::new(), device_id: String::new(),
                 verification_uri: String::new(), user_code: String::new(), updated_at: Utc::now().to_rfc3339() }),
             remote: Mutex::new(None), events: Mutex::new(VecDeque::new()), history_lock: Mutex::new(()),
-            shutdown: CancellationToken::new(), gui: Mutex::new(None), token: uuid::Uuid::new_v4().to_string(),
+            shutdown: CancellationToken::new(), gui: Mutex::new(None), gui_generation:std::sync::atomic::AtomicU64::new(0), token: uuid::Uuid::new_v4().to_string(),
             endpoint: RwLock::new(String::new()), slots: tokio::sync::Semaphore::new(4), _lock: lock,
         });
         Ok(app)
@@ -163,7 +164,9 @@ impl App {
 
     pub async fn open_gui(&self) -> Result<()> {
         let mut slot = self.gui.lock().await;
-        if let Some(child) = slot.as_mut() { if child.try_wait()?.is_none() { return Ok(()); } }
+        if let Some(child) = slot.as_mut() { if child.try_wait()?.is_none() {
+            self.gui_generation.fetch_add(1,std::sync::atomic::Ordering::Relaxed); return Ok(());
+        } }
         let executable = crate::platform::gui_executable()?;
         *slot = Some(tokio::process::Command::new(executable)
             .env("DC_DESCRIPTOR", self.dir.join("control.json"))

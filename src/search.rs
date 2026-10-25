@@ -45,6 +45,7 @@ impl Searches {
         if args["includeHidden"].as_bool().unwrap_or(false) { cmd.arg("--hidden"); }
         if let Some(glob) = args["filePattern"].as_str() { cmd.arg("--glob").arg(glob); }
         cmd.arg("--").arg(path).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
         let mut child = cmd.spawn().context("Unable to start bundled ripgrep")?;
         let stdout = child.stdout.take().context("Search stdout missing")?;
         let stderr = child.stderr.take().context("Search stderr missing")?;

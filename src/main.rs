@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows,feature="tray"),windows_subsystem="windows")]
+
 mod app;
 mod control;
 mod documents;
@@ -39,7 +41,14 @@ fn main() -> Result<()> {
         .expect("User configuration directory unavailable").config_dir().to_owned());
     if matches!(cli.command, Some(Command::Gui)) { return control::open_existing(&dir); }
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
-    let app = app::App::load(dir)?;
+    let app = match app::App::load(dir.clone()) {
+        Ok(app) => app,
+        Err(error) if !matches!(cli.command,Some(Command::Stdio|Command::Logout|Command::Remote{headless:true})) &&
+            error.downcast_ref::<std::io::Error>().is_some_and(|e|e.raw_os_error() == fs2::lock_contended_error().raw_os_error()) => {
+                return control::open_existing(&dir);
+            }
+        Err(error) => return Err(error),
+    };
     if matches!(cli.command, Some(Command::Logout)) {
         let path = app.dir.join("session.json"); if path.exists() { std::fs::remove_file(path)?; } return Ok(());
     }

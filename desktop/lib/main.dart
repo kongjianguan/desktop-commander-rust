@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'api.dart';
 
 void main() => runApp(const CommanderApp());
@@ -42,6 +43,7 @@ class _ControlPanelState extends State<ControlPanel> {
   bool _busy = false;
   bool _polling = false;
   bool _editing = false;
+  int? _focusGeneration;
   final _name = TextEditingController();
   final _proxy = TextEditingController();
   final _noProxy = TextEditingController();
@@ -57,6 +59,9 @@ class _ControlPanelState extends State<ControlPanel> {
 
   Future<void> _initialize() async {
     try {
+      await windowManager.ensureInitialized();
+      await windowManager.setMinimumSize(const Size(560, 560));
+      await windowManager.setSize(const Size(820, 760));
       _api = await ControlApi.load(descriptorPath: widget.descriptorPath);
       await _refresh();
       _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
@@ -71,6 +76,11 @@ class _ControlPanelState extends State<ControlPanel> {
     try {
       final data = await _api!.request('GET', '/status');
       if (!mounted) return;
+      if (_focusGeneration != data['guiGeneration']) {
+        _focusGeneration = data['guiGeneration'] as int;
+        await windowManager.show();
+        await windowManager.focus();
+      }
       if (_snapshot == null || !_editing) {
         final settings = data['settings'] as Map<String, dynamic>;
         _name.text = settings['deviceName'] as String;

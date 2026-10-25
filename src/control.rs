@@ -17,7 +17,8 @@ async fn authenticate(State(app):State<Arc<App>>,request:Request,next:Next) -> R
 
 async fn status(State(app):State<Arc<App>>) -> Json<Value> {
     Json(json!({"status":*app.status.read().await,"settings":*app.settings.read().await,
-        "events":*app.events.lock().await,"version":env!("CARGO_PKG_VERSION"),"pid":std::process::id()}))
+        "events":*app.events.lock().await,"version":env!("CARGO_PKG_VERSION"),"pid":std::process::id(),
+        "guiGeneration":app.gui_generation.load(std::sync::atomic::Ordering::Relaxed)}))
 }
 async fn start(State(app):State<Arc<App>>) -> ApiResult { app.start().await; Ok(Json(json!({"ok":true}))) }
 async fn stop(State(app):State<Arc<App>>) -> ApiResult { app.stop().await.map_err(failure)?; Ok(Json(json!({"ok":true}))) }
