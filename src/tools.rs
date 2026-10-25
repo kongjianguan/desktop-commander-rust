@@ -63,10 +63,15 @@ impl Tools {
                 let mut config = prefs.tools.clone();
                 config["version"] = json!(env!("CARGO_PKG_VERSION"));
                 config["systemInfo"] = json!({"platform": std::env::consts::OS,"arch":std::env::consts::ARCH});
-                Ok(result(config))
+                let entries:Vec<_> = config.as_object().context("Invalid tool configuration")?.iter().filter(|(key,_)|key.as_str() != "systemInfo" && key.as_str() != "version")
+                    .map(|(key,value)|json!({"key":key,"value":value,"valueType":if value.is_array(){"array"}else if value.is_boolean(){"boolean"}else if value.is_number(){"number"}else{"string"},
+                        "editable":key != "telemetryEnabled"})).collect();
+                Ok(json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&config)?}],
+                    "structuredContent":{"config":config,"entries":entries,"uiHints":{"availableShells":[prefs.tools["defaultShell"]]}}}))
             }
             "set_config_value" => {
                 let key = string(args, "key")?;
+                ensure!(key != "telemetryEnabled","Telemetry settings are read-only");
                 ensure!(prefs.tools.get(key).is_some(), "Unknown configuration key: {key}");
                 let mut settings = prefs;
                 let old = &settings.tools[key]; let value = &args["value"];
@@ -87,6 +92,7 @@ impl Tools {
                     return Ok(text(String::from_utf8(bytes)?));
                 }
                 let file = path("path")?;
+                if file.is_dir() { return directory_result(&file,2); }
                 if document(&file) || image(&file) { return crate::documents::invoke(app, "read_file", args).await; }
                 let offset = args["offset"].as_i64().unwrap_or(0);
                 let length = number(args, "length", lines as u64).min(10_000) as usize;
@@ -105,8 +111,8 @@ impl Tools {
                 let content = output.into_iter().take(length).collect::<Vec<_>>().join("\n");
                 let mime = if file.extension().is_some_and(|ext| ext == "md") {"text/markdown"} else {"text/plain"};
                 Ok(json!({"content":[{"type":"text","text":content}],"structuredContent":{
-                    "filePath":file,"fileName":file.file_name().unwrap_or_default(),"fileType":if mime == "text/markdown" {"markdown"} else {"text"},
-                    "content":content,"mimeType":mime,"sourceTool":"read_file"}}))
+                    "filePath":file,"fileName":file.file_name().unwrap_or_default(),"fileType":if mime == "text/markdown" {"markdown"} else if file.extension().is_some_and(|ext|ext == "html") {"html"} else {"text"},
+                    "mimeType":mime,"sourceTool":"read_file"}}))
             }
             "read_multiple_files" => {
                 let mut results = Vec::new();
@@ -147,13 +153,7 @@ impl Tools {
             "move_file" => { tokio::fs::rename(path("source")?,path("destination")?).await?; Ok(text("File moved")) }
             "list_directory" => {
                 let base = path("path")?; let depth = number(args,"depth",2).min(16) as usize;
-                let mut entries = Vec::new();
-                for entry in walkdir::WalkDir::new(&base).max_depth(depth).follow_links(false).into_iter().skip(1) {
-                    let entry = entry?;
-                    ensure!(entries.len() < 10_000,"Directory listing exceeds 10000 entries; reduce depth");
-                    entries.push(json!({"path":entry.path(),"name":entry.file_name(),"isDirectory":entry.file_type().is_dir()}));
-                }
-                Ok(result(json!({"entries":entries})))
+                directory_result(&base,depth)
             }
             "get_file_info" => {
                 let file = path("path")?;
@@ -222,6 +222,17 @@ pub fn checked_path(input: &str, config: &Value) -> Result<PathBuf> {
 }
 fn document(path: &Path) -> bool { matches!(path.extension().and_then(|s|s.to_str()).unwrap_or("").to_lowercase().as_str(),"pdf"|"docx"|"xlsx") }
 fn image(path: &Path) -> bool { matches!(path.extension().and_then(|s|s.to_str()).unwrap_or("").to_lowercase().as_str(),"png"|"jpg"|"jpeg"|"webp"|"gif"|"bmp"|"tiff") }
+
+fn directory_result(base:&Path,depth:usize) -> Result<Value> {
+    let mut entries = Vec::new();
+    for entry in walkdir::WalkDir::new(base).max_depth(depth).sort_by_file_name().follow_links(false).into_iter().skip(1) {
+        let entry = entry?;
+        ensure!(entries.len() < 10_000,"Directory listing exceeds 10000 entries; reduce depth");
+        entries.push(format!("[{}] {}",if entry.file_type().is_dir(){"DIR"}else{"FILE"},entry.path().strip_prefix(base)?.display()));
+    }
+    Ok(json!({"content":[{"type":"text","text":entries.join("\n")}],"structuredContent":{
+        "filePath":base,"fileName":base.file_name().unwrap_or_default(),"fileType":"directory"}}))
+}
 
 async fn history(app: &crate::app::App, record: &Value) -> Result<()> {
     let _guard = app.history_lock.lock().await;

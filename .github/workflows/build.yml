@@ -44,7 +44,17 @@ jobs:
       - name: Build Rust
         env:
           CARGO_TERM_COLOR: never
-        run: cargo build --release --features tray
+        run: cargo build --locked --release --features tray
+      - name: Stage Rust executable
+        shell: bash
+        run: |
+          mkdir -p .work/bundle
+          cp "target/release/desktop-commander${{ runner.os == 'Windows' && '.exe' || '' }}" .work/bundle/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.target }}
+          path: .work/bundle/desktop-commander*
+          include-hidden-files: true
       - name: Cache native resources
         uses: actions/cache@v4
         with:
@@ -52,9 +62,6 @@ jobs:
           key: native-resources-v1-${{ matrix.target }}
       - name: Bundle native dependencies
         run: python scripts/vendor.py ${{ matrix.target }}
-      - name: Stage Rust executable
-        shell: bash
-        run: cp target/release/desktop-commander* .work/bundle/
       - name: Install E2E dependencies
         run: python -m pip install mcp==1.20.0 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.1.1 pillow==11.3.0 psutil==7.1.0
       - name: Verify real MCP and document operations
@@ -96,6 +103,7 @@ jobs:
             .work/evidence/*
             Cargo.lock
           if-no-files-found: warn
+          include-hidden-files: true
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: native

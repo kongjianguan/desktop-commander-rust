@@ -73,8 +73,8 @@ def main():
         shutil.copy2(item, cmarker / name)
     fonts = resources / "fonts"
     fonts.mkdir(exist_ok=True)
-    for name, remote in [("NotoSansCJKsc-Regular.otf", "OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"), ("LICENSE", "LICENSE")]:
-        item = fetch(f"https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/{remote}", cache / "fonts" / name)
+    for name, remote in [("NotoSansCJKsc-Regular.otf", "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"), ("LICENSE", "LICENSE")]:
+        item = fetch(f"https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/{remote}", cache / "fonts" / name)
         shutil.copy2(item, fonts / name)
     shutil.copy2(ROOT / "resources/pdf.typ", resources / "pdf.typ")
     licenses = resources / "licenses"

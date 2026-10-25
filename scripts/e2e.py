@@ -156,7 +156,7 @@ async def mcp_flow():
 
                 config_data = structured(await call("get_config"))
                 await call("set_config_value", key="fileReadLineLimit", value=300)
-                assert structured(await call("get_config"))["fileReadLineLimit"] == 300
+                assert structured(await call("get_config"))["config"]["fileReadLineLimit"] == 300
                 await call("get_recent_tool_calls", maxResults=10)
                 await call("get_usage_stats")
                 await call("get_prompts", action="get_prompt", promptId="onb2_01")
