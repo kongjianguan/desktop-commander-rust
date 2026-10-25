@@ -63,7 +63,7 @@ jobs:
       - name: Bundle native dependencies
         run: python scripts/vendor.py ${{ matrix.target }}
       - name: Install E2E dependencies
-        run: python -m pip install mcp==1.20.0 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.1.1 pillow==11.3.0 psutil==7.1.0
+        run: python -m pip install mcp==1.20.0 pydantic==2.11.9 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.1.1 pillow==11.3.0 psutil==7.1.0
       - name: Verify real MCP and document operations
         run: python scripts/e2e.py
       - uses: subosito/flutter-action@v2

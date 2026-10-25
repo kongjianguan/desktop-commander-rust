@@ -34,21 +34,24 @@ pub fn worker() -> Result<()> {
         "docx" => docx(name,args,&path),
         "xlsx" => excel(name,args,&path),
         "pdf" => pdf(name,args,&path,Path::new(crate::tools::string(&input,"work")?),&input["tools"]),
-        "png"|"jpg"|"jpeg"|"gif"|"webp"|"bmp"|"tiff" => image(name,&path),
+        "png"|"jpg"|"jpeg"|"gif"|"webp"|"bmp"|"tiff" => image(name,args,&path),
         _ => bail!("Unsupported document format"),
     }?;
     serde_json::to_writer(std::io::stdout().lock(),&result)?;
     Ok(())
 }
 
-fn image(name:&str,path:&Path) -> Result<Value> {
+fn image(name:&str,args:&Value,path:&Path) -> Result<Value> {
     ensure!(name == "read_file","Unsupported image operation");
     ensure!(path.metadata()?.len() <= 16*1024*1024,"Image exceeds 16 MiB");
     let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
     let mut limits = image::Limits::default(); limits.max_alloc = Some(128*1024*1024); reader.limits(limits);
     let image = reader.decode()?.thumbnail(2048,2048);
     let mut buffer = Cursor::new(Vec::new()); image.write_to(&mut buffer,image::ImageFormat::Png)?;
-    Ok(json!({"content":[{"type":"image","mimeType":"image/png","data":base64::engine::general_purpose::STANDARD.encode(buffer.into_inner())}]}))
+    let data = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
+    let content = if args["origin"] == "ui" {json!([{"type":"text","text":data}])}
+        else {json!([{"type":"image","mimeType":"image/png","data":data}])};
+    Ok(json!({"content":content,"structuredContent":{"fileName":path.file_name().unwrap_or_default(),"filePath":path,"fileType":"image","mimeType":"image/png"}}))
 }
 
 fn pretty_xml(source: &str) -> Result<String> {
@@ -76,7 +79,8 @@ fn docx(name: &str,args: &Value,path: &Path) -> Result<Value> {
         let offset = args["offset"].as_i64().unwrap_or(0);
         let start = if offset < 0 {lines.len().saturating_sub(offset.unsigned_abs() as usize)} else {offset as usize};
         let content = lines.into_iter().skip(start).take(crate::tools::number(args,"length",1000).min(10_000) as usize).collect::<Vec<_>>().join("\n");
-        return Ok(crate::tools::result(json!({"content":content,"mimeType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","metadata":{"isDocx":true}})));
+        return Ok(json!({"content":[{"type":"text","text":content}],"structuredContent":{
+            "fileName":path.file_name().unwrap_or_default(),"filePath":path,"fileType":"unsupported"}}));
     }
     if name == "get_file_info" { return Ok(crate::tools::result(json!({"size":path.metadata()?.len(),"isFile":true,"isDirectory":false,"metadata":{"isDocx":true,"xmlParts":archive.len()}}))); }
     ensure!(name == "edit_block","Unsupported DOCX operation");
@@ -246,7 +250,16 @@ fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result
             }
             pages.push(json!({"text":text,"images":images,"pageNumber":index+1}));
         }
-        return Ok(crate::tools::result(json!({"content":"","mimeType":"application/pdf","metadata":{"isPdf":true,"totalPages":count,"pages":pages}})));
+        let mut content = vec![json!({"type":"text","text":format!("PDF file: {} ({count} pages)",path.display())})];
+        for mut page in pages {
+            let Value::Array(images) = page["images"].take() else { bail!("PDF images missing"); };
+            for mut image in images {
+                content.push(json!({"type":"image","mimeType":image["mimeType"].take(),"data":image["data"].take()}));
+            }
+            content.push(json!({"type":"text","text":format!("<!-- Page: {} -->\n{}",page["pageNumber"],page["text"].as_str().unwrap_or_default())}));
+        }
+        return Ok(json!({"content":content,"structuredContent":{"fileName":path.file_name().unwrap_or_default(),
+            "filePath":path,"fileType":"unsupported"}}));
     }
     ensure!(name == "write_pdf" || name == "edit_block","Unsupported PDF operation");
     let content = if args["content"].is_string() {serde_json::from_str(crate::tools::string(args,"content")?)?} else {args["content"].clone()};

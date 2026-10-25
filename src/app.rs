@@ -156,7 +156,11 @@ impl App {
 
     pub async fn stop(&self) -> Result<()> {
         if let Some((cancel, task)) = self.remote.lock().await.take() {
-            cancel.cancel(); task.await??;
+            cancel.cancel();
+            if let Err(error) = task.await? {
+                self.state("stopped",format!("远程连接已停止，最后错误：{error:#}")).await;
+                return Ok(());
+            }
         }
         self.state("stopped", "远程连接已停止").await;
         Ok(())
