@@ -11,6 +11,20 @@ pub async fn invoke(app: &Arc<crate::app::App>, name: &str, args: &Value) -> Res
     let work = app.dir.join("work"); crate::app::private_dir(&work)?;
     let temp = tempfile::tempdir_in(work)?;
     let tools = app.settings.read().await.tools.clone();
+    let mut args = args.clone();
+    let file = args["path"].as_str().or(args["file_path"].as_str()).context("Document path missing")?;
+    if Path::new(file).extension().is_some_and(|ext|ext.eq_ignore_ascii_case("pdf")) {
+        let base = Path::new(file).parent().context("Document parent missing")?.to_owned();
+        if let Some(markdown) = args["content"].as_str() {
+            args["content"] = json!(prepare_markdown(app,markdown,&base,temp.path()).await?);
+        } else if let Some(operations) = args["content"].as_array_mut() {
+            for operation in operations {
+                if let Some(markdown) = operation["markdown"].as_str() {
+                    operation["markdown"] = json!(prepare_markdown(app,markdown,&base,temp.path()).await?);
+                }
+            }
+        }
+    }
     let mut child = tokio::process::Command::new(std::env::current_exe()?).arg("document-worker")
         .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
         .kill_on_drop(true).spawn()?;
@@ -20,6 +34,38 @@ pub async fn invoke(app: &Arc<crate::app::App>, name: &str, args: &Value) -> Res
     let output = tokio::time::timeout(Duration::from_secs(120),child.wait_with_output()).await.context("Document processing exceeded 120 seconds")??;
     ensure!(output.status.success(),"Document worker failed: {}",String::from_utf8_lossy(&output.stderr));
     Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+async fn prepare_markdown(app:&Arc<crate::app::App>,markdown:&str,base:&Path,work:&Path) -> Result<String> {
+    use futures_util::StreamExt;
+    use pulldown_cmark::{Parser,Options,Event as MarkdownEvent,Tag};
+    let mut events:Vec<_> = Parser::new_ext(markdown,Options::all()).map(MarkdownEvent::into_static).collect();
+    let settings = app.settings.read().await.clone();
+    let client = crate::remote::http_client(&settings)?;
+    for event in &mut events {
+        if let MarkdownEvent::Start(Tag::Image {dest_url,..}) = event {
+            let source = dest_url.to_string();
+            let bytes = if source.starts_with("https://") || source.starts_with("http://") {
+                let response = client.get(&source).timeout(Duration::from_secs(15)).send().await?.error_for_status()?;
+                let mut stream = response.bytes_stream(); let mut bytes = Vec::new();
+                while let Some(chunk) = stream.next().await {let chunk=chunk?;
+                    ensure!(bytes.len()+chunk.len() <= 8*1024*1024,"Markdown image exceeds 8 MiB"); bytes.extend_from_slice(&chunk);}
+                bytes
+            } else {
+                let path = if source.starts_with("file://") {reqwest::Url::parse(&source)?.to_file_path().map_err(|_|anyhow::anyhow!("Invalid file URL"))?}
+                    else {base.join(&source)};
+                let path = crate::tools::checked_path(path.to_str().context("Invalid image path")?,&settings.tools)?;
+                ensure!(tokio::fs::metadata(&path).await?.len() <= 8*1024*1024,"Markdown image exceeds 8 MiB");
+                tokio::fs::read(path).await?
+            };
+            let name = format!("asset-{}",uuid::Uuid::new_v4());
+            tokio::fs::write(work.join(&name),bytes).await?;
+            *dest_url = name.into();
+        }
+    }
+    let mut normalized = String::new();
+    pulldown_cmark_to_cmark::cmark(events.iter(),&mut normalized)?;
+    Ok(normalized)
 }
 
 pub fn worker() -> Result<()> {
@@ -66,7 +112,12 @@ fn docx(name: &str,args: &Value,path: &Path) -> Result<Value> {
         ensure!(args["mode"] != "append","DOCX append is unsupported; use edit_block");
         let mut document = docx_rs::Docx::new();
         for line in crate::tools::string(args,"content")?.lines() {
-            document = document.add_paragraph(docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(line)));
+            let mut paragraph = docx_rs::Paragraph::new();
+            if let Some(pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading{level,..})) = pulldown_cmark::Parser::new(line).next() {
+                let text:String = pulldown_cmark::Parser::new(line).filter_map(|event|match event {pulldown_cmark::Event::Text(text)|pulldown_cmark::Event::Code(text)=>Some(text.to_string()),_=>None}).collect();
+                paragraph = paragraph.style(&format!("Heading{}",level as u8)).add_run(docx_rs::Run::new().add_text(text));
+            } else {paragraph=paragraph.add_run(docx_rs::Run::new().add_text(line));}
+            document = document.add_paragraph(paragraph);
         }
         document.build().pack(File::create(path)?)?;
         return Ok(crate::tools::text("DOCX written"));
@@ -223,7 +274,7 @@ fn copy_directory(from: &Path,to: &Path) -> Result<()> {
 fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result<Value> {
     let resources = crate::platform::resources()?;
     let pdfium = Pdfium::new(Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&resources))?);
-    if name == "write_file" || (name == "write_pdf" && args["content"].is_string() && !args["content"].as_str().unwrap().trim_start().starts_with('[')) {
+    if name == "write_file" || (name == "write_pdf" && args["content"].is_string()) {
         create_pdf(crate::tools::string(args,"content")?,&args["options"],path,work)?;
         return Ok(crate::tools::text("PDF generated"));
     }
@@ -262,8 +313,7 @@ fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result
             "filePath":path,"fileType":"unsupported"}}));
     }
     ensure!(name == "write_pdf" || name == "edit_block","Unsupported PDF operation");
-    let content = if args["content"].is_string() {serde_json::from_str(crate::tools::string(args,"content")?)?} else {args["content"].clone()};
-    for operation in content.as_array().context("PDF operations must be an array")? {
+    for operation in args["content"].as_array().context("PDF operations must be an array")? {
         let count = document.pages().len() as i64;
         match crate::tools::string(operation,"type")? {
             "delete" => {

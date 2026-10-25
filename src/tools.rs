@@ -14,7 +14,9 @@ pub struct Tools {
 
 pub fn text(value: impl AsRef<str>) -> Value { json!({"content":[{"type":"text","text":value.as_ref()}]}) }
 pub fn result(value: Value) -> Value {
-    json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&value).expect("JSON serialization failed")}], "structuredContent": value})
+    let text = serde_json::to_string_pretty(&value).expect("JSON serialization failed");
+    let structured = if value.is_object() {value} else {json!({"data":value})};
+    json!({"content":[{"type":"text","text":text}], "structuredContent": structured})
 }
 pub fn string<'a>(args: &'a Value, field: &str) -> Result<&'a str> { args[field].as_str().with_context(|| format!("Missing string: {field}")) }
 pub fn number(args: &Value, field: &str, default: u64) -> u64 { args[field].as_u64().unwrap_or(default) }
