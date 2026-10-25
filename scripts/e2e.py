@@ -104,7 +104,8 @@ async def mcp_flow():
                 record("Real ripgrep search and pagination")
 
                 command = shell_command([sys.executable,"-u","-c","print('terminal-e2e')"])
-                terminal = structured(await call("start_process", command=command, timeout_ms=2000))
+                terminal = structured(await call("start_process", command=command, timeout_ms=2000,verbose_timing=True))
+                assert terminal["timingInfo"]["totalDurationMs"] >= 0
                 output = terminal["output"]
                 for _ in range(30):
                     if terminal["exitCode"] is not None:
@@ -112,6 +113,8 @@ async def mcp_flow():
                     terminal = structured(await call("read_process_output",pid=terminal["pid"],timeout_ms=1000))
                     output += terminal["output"]
                 assert "terminal-e2e" in output, terminal
+                measured=structured(await call("read_process_output",pid=terminal["pid"],offset=-1,verbose_timing=True))
+                assert measured["timingInfo"]["outputEvents"]
                 interactive = shell_command([sys.executable,"-u","-c","print(input(), flush=True)"])
                 terminal = structured(await call("start_process", command=interactive, timeout_ms=100))
                 response = structured(await call("interact_with_process", pid=terminal["pid"], input="interactive-e2e", timeout_ms=2000))

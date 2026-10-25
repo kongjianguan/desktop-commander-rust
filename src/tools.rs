@@ -179,10 +179,10 @@ impl Tools {
                     for item in blocked { if let Some(item) = item.as_str() { ensure!(!command.split_whitespace().any(|word|word == item),"Command is blocked: {item}"); } }
                 }
                 let shell = args["shell"].as_str().or(prefs.tools["defaultShell"].as_str()).context("defaultShell missing")?;
-                Ok(result(app.tools.terminal.start(command,shell,number(args,"timeout_ms",1000)).await?))
+                Ok(result(app.tools.terminal.start(command,shell,number(args,"timeout_ms",1000),args["verbose_timing"].as_bool().unwrap_or(false)).await?))
             }
-            "read_process_output" => Ok(result(app.tools.terminal.read(number(args,"pid",0) as u32,number(args,"timeout_ms",0),args["offset"].as_i64(),number(args,"length",lines as u64) as usize).await?)),
-            "interact_with_process" => Ok(result(app.tools.terminal.interact(number(args,"pid",0) as u32,string(args,"input")?,number(args,"timeout_ms",1000)).await?)),
+            "read_process_output" => Ok(result(app.tools.terminal.read(number(args,"pid",0) as u32,number(args,"timeout_ms",0),args["offset"].as_i64(),number(args,"length",lines as u64) as usize,args["verbose_timing"].as_bool().unwrap_or(false)).await?)),
+            "interact_with_process" => Ok(result(app.tools.terminal.interact(number(args,"pid",0) as u32,string(args,"input")?,number(args,"timeout_ms",1000),args["wait_for_prompt"].as_bool().unwrap_or(true),args["verbose_timing"].as_bool().unwrap_or(false)).await?)),
             "force_terminate" => Ok(result(app.tools.terminal.terminate(number(args,"pid",0) as u32).await?)),
             "list_sessions" => Ok(result(app.tools.terminal.list().await)),
             "list_processes" => {
