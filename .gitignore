@@ -1,0 +1,10 @@
+/target/
+/.work/
+/desktop/.dart_tool/
+/desktop/build/
+/desktop/macos/
+/desktop/windows/
+/desktop/linux/
+/desktop/.flutter-plugins-dependencies
+*.log
+.DS_Store

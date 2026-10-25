@@ -1,0 +1,111 @@
+name: Build and verify
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            desktop: macos
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            desktop: macos
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            desktop: windows
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            desktop: linux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev ninja-build libclang-dev xvfb dbus-x11
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Rust
+        run: cargo build --release --features tray
+      - name: Cache native resources
+        uses: actions/cache@v4
+        with:
+          path: .work/vendor
+          key: native-resources-v1-${{ matrix.target }}
+      - name: Bundle native dependencies
+        run: python scripts/vendor.py ${{ matrix.target }}
+      - name: Stage Rust executable
+        shell: bash
+        run: cp target/release/desktop-commander* .work/bundle/
+      - name: Install E2E dependencies
+        run: python -m pip install mcp==1.20.0 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.1.1 pillow==11.3.0 psutil==7.1.0
+      - name: Verify real MCP and document operations
+        run: python scripts/e2e.py
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Generate native Flutter runners
+        working-directory: desktop
+        run: flutter create --platforms=macos,windows,linux --project-name desktop_commander .
+      - name: Analyze Flutter
+        working-directory: desktop
+        run: flutter analyze lib integration_test
+      - name: Build Flutter
+        working-directory: desktop
+        run: flutter build ${{ matrix.desktop }} --release
+      - name: Verify Flutter against Rust
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        env:
+          DC_BUNDLE: ${{ github.workspace }}/.work/bundle
+        run: flutter test integration_test/control_test.dart -d ${{ matrix.desktop }}
+      - name: Verify Flutter against Rust on Linux
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        env:
+          DC_BUNDLE: ${{ github.workspace }}/.work/bundle
+        run: dbus-run-session -- xvfb-run -a flutter test integration_test/control_test.dart -d linux
+      - name: Package application
+        run: python scripts/package.py ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-commander-${{ matrix.target }}
+          path: |
+            .work/packages/*
+            .work/evidence/*
+            Cargo.lock
+          if-no-files-found: warn
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: native
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/packages/*
+          generate_release_notes: true
+          draft: true

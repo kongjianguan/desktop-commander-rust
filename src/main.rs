@@ -1,0 +1,67 @@
+mod app;
+mod control;
+mod documents;
+mod mcp;
+mod platform;
+mod remote;
+mod tools;
+mod terminal;
+mod search;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    #[arg(long, global = true, env = "DC_CONFIG_DIR")]
+    config_dir: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Remote { #[arg(long)] headless: bool },
+    Stdio,
+    Gui,
+    Logout,
+    DocumentWorker,
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt().with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+    let cli = Cli::parse();
+    if matches!(cli.command, Some(Command::DocumentWorker)) { return documents::worker(); }
+    let dir = cli.config_dir.unwrap_or_else(|| directories::ProjectDirs::from("app", "DesktopCommander", "DesktopCommanderRust")
+        .expect("User configuration directory unavailable").config_dir().to_owned());
+    if matches!(cli.command, Some(Command::Gui)) { return control::open_existing(&dir); }
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
+    let app = app::App::load(dir)?;
+    if matches!(cli.command, Some(Command::Logout)) {
+        let path = app.dir.join("session.json"); if path.exists() { std::fs::remove_file(path)?; } return Ok(());
+    }
+    if matches!(cli.command, Some(Command::Stdio)) { return runtime.block_on(mcp::serve(app)); }
+    let headless = matches!(cli.command, Some(Command::Remote { headless: true }));
+    let running = app.clone();
+    let background = runtime.spawn(async move {
+        let result = control::serve(running.clone()).await;
+        if let Err(error) = result { tracing::error!("{error:#}"); running.shutdown.cancel(); }
+    });
+    #[cfg(feature = "tray")]
+    if !headless { platform::tray(app.clone(), runtime.handle().clone())?; }
+    #[cfg(not(feature = "tray"))]
+    if !headless { anyhow::bail!("This build has no tray support; use remote --headless"); }
+    runtime.block_on(async {
+        if headless { tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = app.shutdown.cancelled() => {} } }
+        app.shutdown.cancel();
+        app.stop().await?;
+        app.tools.terminal.shutdown().await?;
+        if let Some(mut child) = app.gui.lock().await.take() { if child.try_wait()?.is_none() { child.kill().await?; } }
+        background.await?;
+        let descriptor = app.dir.join("control.json"); if descriptor.exists() { std::fs::remove_file(descriptor)?; }
+        Ok(())
+    })
+}
