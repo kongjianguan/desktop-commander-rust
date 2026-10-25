@@ -97,7 +97,7 @@ fn docx(name: &str,args: &Value,path: &Path) -> Result<Value> {
     let pending = path.with_extension(format!("{}.pending",uuid::Uuid::new_v4()));
     let mut output = zip::ZipWriter::new(File::create(&pending)?);
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
+        let entry = archive.by_index(i)?;
         if let Some(bytes) = edits.get(entry.name()) {
             output.start_file(entry.name(),zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated))?;
             output.write_all(bytes)?;
@@ -259,7 +259,7 @@ fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result
                     ensure!(index >= 0 && index < count,"Page index out of range"); Ok(index as u16)
                 }).collect::<Result<Vec<_>>>()?;
                 indices.sort_unstable(); indices.dedup(); indices.reverse();
-                for index in indices { document.pages_mut().delete_page_at_index(index)?; }
+                for index in indices { document.pages().get(index)?.delete()?; }
             }
             "insert" => {
                 let index = operation["pageIndex"].as_i64().context("pageIndex missing")?; let index = if index < 0 {count+index} else {index};

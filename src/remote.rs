@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
-use reqwest_websocket::{Message, Upgrade};
+use reqwest_websocket::{Message, RequestBuilderExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{sync::{Arc, atomic::{AtomicI64, Ordering}}, time::{Duration, Instant}};
@@ -39,9 +39,8 @@ impl Cloud {
             .header("apikey",&self.key).header("Prefer","return=representation").timeout(Duration::from_secs(15));
         if let Some(body) = body { request = request.json(body); }
         let response = request.send().await?; self.observe(&response);
-        let status = response.status();
+        response.error_for_status_ref().context("Cloud request rejected")?;
         let bytes = response.bytes().await?;
-        ensure!(status.is_success(),"Cloud request failed ({status}): {}",String::from_utf8_lossy(&bytes));
         if bytes.is_empty() { Ok(Value::Null) } else { Ok(serde_json::from_slice(&bytes)?) }
     }
     async fn refresh(&self) -> Result<()> {
@@ -57,8 +56,8 @@ impl Cloud {
     async fn device(&self, online: bool) -> Result<()> {
         let session = self.app.session.read().await.clone().context("Session missing")?;
         let settings = self.app.settings.read().await;
-        let caps = json!({"tools":self.app.tools.definitions,"transport_broadcast_v1":online,
-            "platform":std::env::consts::OS,"version":env!("CARGO_PKG_VERSION")});
+        let caps = if online {json!({"app_version":env!("CARGO_PKG_VERSION"),"transport_broadcast_v1":true})}
+            else {json!({"app_version":env!("CARGO_PKG_VERSION")})};
         self.request(reqwest::Method::PATCH,&format!("/rest/v1/mcp_devices?id=eq.{}",session.device_id),
             Some(&json!({"status":if online {"online"}else{"offline"},"last_seen":self.now(),"capabilities":caps,"device_name":settings.device_name}))).await?;
         Ok(())
@@ -175,7 +174,10 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
     // 获取用户使用服务端验证，避免依赖设备本地时间判断 JWT 是否过期。
     let user = match cloud.request(reqwest::Method::GET,"/auth/v1/user",None).await {
         Ok(user) => user,
-        Err(_) => { cloud.refresh().await?; cloud.request(reqwest::Method::GET,"/auth/v1/user",None).await? }
+        Err(error) if error.downcast_ref::<reqwest::Error>().is_some_and(|e|e.status() == Some(reqwest::StatusCode::UNAUTHORIZED)) => {
+            cloud.refresh().await?; cloud.request(reqwest::Method::GET,"/auth/v1/user",None).await?
+        }
+        Err(error) => return Err(error),
     };
     let user_id = crate::tools::string(&user,"id")?.to_owned();
     let mut cloud = Arc::try_unwrap(cloud).map_err(|_|anyhow::anyhow!("Unexpected cloud reference"))?;
@@ -189,7 +191,7 @@ pub async fn run(app: Arc<App>, cancel: CancellationToken) -> Result<()> {
     while !cancel.is_cancelled() {
         let result = connected(cloud.clone(),&cancel).await;
         if cancel.is_cancelled() { break; }
-        cloud.device(false).await?;
+        if let Err(error) = cloud.device(false).await { tracing::warn!("Offline status could not be sent: {error:#}"); }
         attempt += 1;
         let detail = result.err().map(|e|format!("{e:#}")).unwrap_or_else(||"Connection closed".into());
         app.state("reconnecting",detail).await;

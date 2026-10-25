@@ -57,7 +57,7 @@ pub struct App {
     pub settings: RwLock<Settings>,
     pub session: RwLock<Option<Session>>,
     pub status: RwLock<Status>,
-    pub remote: Mutex<Option<(CancellationToken, tokio::task::JoinHandle<()>)>>,
+    pub remote: Mutex<Option<(CancellationToken, tokio::task::JoinHandle<Result<()>>)>>,
     pub events: Mutex<VecDeque<Value>>,
     pub history_lock: Mutex<()>,
     pub shutdown: CancellationToken,
@@ -145,15 +145,17 @@ impl App {
         let app = self.clone();
         let task_cancel = cancel.clone();
         *remote = Some((cancel, tokio::spawn(async move {
-            if let Err(error) = crate::remote::run(app.clone(), task_cancel).await {
+            let result = crate::remote::run(app.clone(), task_cancel).await;
+            if let Err(error) = &result {
                 app.state("error", format!("{error:#}")).await;
             }
+            result
         })));
     }
 
     pub async fn stop(&self) -> Result<()> {
         if let Some((cancel, task)) = self.remote.lock().await.take() {
-            cancel.cancel(); task.await?;
+            cancel.cancel(); task.await??;
         }
         self.state("stopped", "远程连接已停止").await;
         Ok(())
