@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run(*args):
     subprocess.run([str(arg) for arg in args], check=True)
+
+
+def archive_bundle(source,destination,windows):
+    if windows:
+        with zipfile.ZipFile(str(destination)+".zip","w",compression=zipfile.ZIP_DEFLATED,strict_timestamps=False) as archive:
+            for path in source.rglob("*"):
+                archive.write(path,path.relative_to(source))
+    else:
+        shutil.make_archive(str(destination),"gztar",source)
 
 
 def main():
@@ -105,8 +115,7 @@ def main():
         run("dpkg-deb","--build","--root-owner-group",deb,packages / f"desktop-commander-{version}-linux-x64.deb")
     shutil.copy2(ROOT / "LICENSE",bundle / "LICENSE")
     shutil.copy2(ROOT / "README.md",bundle / "README.md")
-    archive_format = "zip" if "windows" in target else "gztar"
-    shutil.make_archive(str(packages / f"desktop-commander-{version}-{target}"),archive_format,bundle)
+    archive_bundle(bundle,packages / f"desktop-commander-{version}-{target}","windows" in target)
     agent = ROOT / ".work/headless" / target
     agent.mkdir(parents=True,exist_ok=True)
     suffix = ".exe" if "windows" in target else ""
@@ -114,7 +123,7 @@ def main():
     shutil.copytree(bundle / "resources",agent / "resources",dirs_exist_ok=True,symlinks=True)
     shutil.copy2(ROOT / "LICENSE",agent / "LICENSE")
     shutil.copy2(ROOT / "README.md",agent / "README.md")
-    shutil.make_archive(str(packages / f"desktop-commander-headless-{version}-{target}"),archive_format,agent)
+    archive_bundle(agent,packages / f"desktop-commander-headless-{version}-{target}","windows" in target)
     checksums = {file.name:hashlib.sha256(file.read_bytes()).hexdigest() for file in packages.iterdir() if file.is_file()}
     (packages / f"checksums-{target}.json").write_text(json.dumps(checksums,indent=2),encoding="utf-8")
     (packages / f"build-{target}.json").write_text(json.dumps({"version":version,"target":target,"signed":signed,
