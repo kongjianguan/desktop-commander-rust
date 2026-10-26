@@ -1,7 +1,7 @@
 name: desktop_commander
 description: Desktop Commander remote control panel
 publish_to: none
-version: 0.1.0+1
+version: 0.3.0+1
 environment:
   sdk: '>=3.9.0 <4.0.0'
 dependencies:
