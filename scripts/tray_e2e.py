@@ -21,6 +21,7 @@ def main():
     executable = ROOT / ".work/bundle" / ("desktop-commander.exe" if os.name == "nt" else "desktop-commander")
     if sys.platform == "darwin":
         executable = ROOT / ".work/macos/Desktop Commander.app/Contents/MacOS/desktop-commander"
+    executable = Path(os.environ.get("DC_TEST_EXECUTABLE", executable))
     report = {"commit":os.environ.get("GITHUB_SHA"),"passed":False,"connected":False,"desktopHost":os.environ.get("XDG_CURRENT_DESKTOP",sys.platform)}
     with (EVIDENCE / "tray-stderr.log").open("w") as errors:
         child = subprocess.Popen([str(executable),"--config-dir",str(WORK),"remote"],stderr=errors)
