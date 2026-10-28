@@ -16,7 +16,7 @@ pub fn resources() -> Result<PathBuf> {
 }
 pub fn bundled(name:&str) -> Result<PathBuf> {
     let name = if cfg!(windows) {format!("{name}.exe")} else {name.into()};
-    let path = if let Some(contents) = mac_contents()? {contents.join("Helpers").join(name)} else {resources()?.join("bin").join(name)};
+    let path = if let Some(contents) = mac_contents()? {contents.join("Helpers").join(&name)} else {resources()?.join("bin").join(&name)};
     if path.is_file() { return Ok(path); }
     // On Android a Termux package can provide external tools without bundling
     // host-Linux executables that cannot run against Android's Bionic libc.
