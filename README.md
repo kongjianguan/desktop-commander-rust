@@ -27,9 +27,15 @@ desktop-commander --config-dir /absolute/path remote --headless
 PDF 生成使用 Typst，接受 Markdown。`options` 支持 `pageWidth`、`pageHeight`、`margin`（单位为 `mm`）及 `font`。
 PDF 操作支持插入和删除页面。原生依赖随发行包提供，无需安装 Node.js。
 
+## Android ARM64 / Termux（实验性）
+
+原生 Android/Bionic headless Agent 由单独的 GitHub Actions 工作流交叉编译，不依赖 Debian、PRoot 或 Node.js。下载 workflow artifact 并直接在 Termux 中运行；Android 版 PDFium 随包提供，ripgrep 原生交叉编译，Typst 是尽力构建的可选组件。
+
+详见 [Termux 安装、Root 安全与验证说明](docs/android-termux.md)。Android 目前只做静态 ELF/资源检查，尚未完成实体设备端 E2E。
+
 ## 构建与验证
 
-GitHub Actions 编译 macOS ARM64、macOS x64、Windows x64 和 Linux x64 的 Rust、Flutter 程序。
+GitHub Actions 编译 macOS ARM64、macOS x64、Windows x64 和 Linux x64 的 Rust、Flutter 程序，另有 Android ARM64 headless 构建任务。
 每个平台通过真实 stdio MCP 完成文件、终端、搜索与文档操作，并通过 Flutter integration_test 操作真实 Rust 管理接口。
 验证文件、脱敏日志、SHA-256 和内存采样报告保存在构建产物内。
 

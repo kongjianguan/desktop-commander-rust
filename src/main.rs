@@ -39,8 +39,19 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
     let cli = Cli::parse();
     if matches!(cli.command, Some(Command::DocumentWorker)) { return documents::worker(); }
-    let dir = cli.config_dir.unwrap_or_else(|| directories::ProjectDirs::from("app", "DesktopCommander", "DesktopCommanderRust")
-        .expect("User configuration directory unavailable").config_dir().to_owned());
+    let dir = cli.config_dir.unwrap_or_else(|| {
+        #[cfg(target_os="android")]
+        {
+            // Termux owns this home directory; never default to a system-wide or root-owned path.
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_else(||"/data/local/tmp".into()))
+                .join(".config/desktop-commander-rust")
+        }
+        #[cfg(not(target_os="android"))]
+        {
+            directories::ProjectDirs::from("app", "DesktopCommander", "DesktopCommanderRust")
+                .expect("User configuration directory unavailable").config_dir().to_owned()
+        }
+    });
     if matches!(cli.command, Some(Command::Gui)) { return control::open_existing(&dir); }
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
     let app = match app::App::load(dir.clone()) {

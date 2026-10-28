@@ -1,0 +1,102 @@
+name: Android ARM64 (Termux)
+
+on:
+  push:
+    branches: [main, feat/android-termux]
+    paths:
+      - '.github/workflows/android.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'src/**'
+      - 'scripts/vendor.py'
+      - 'scripts/android_package.py'
+      - 'scripts/android_verify.py'
+      - 'resources/**'
+      - 'README.md'
+      - 'docs/android-termux.md'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      TARGET: aarch64-linux-android
+      API_LEVEL: '28'
+      CARGO_BUILD_JOBS: '2'
+      # Align LOAD segments for Android devices using 16 KiB kernel pages.
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-arm64
+      - name: Build Android-native headless ELF
+        run: cargo build --locked --release --target "$TARGET" --no-default-features
+      - name: Build bundled ripgrep for Android
+        shell: bash
+        run: |
+          cargo install ripgrep --version 14.1.1 --locked --target "$TARGET" --root .work/android-ripgrep
+          mkdir -p .work/bundle/resources/bin
+          cp .work/android-ripgrep/bin/rg .work/bundle/resources/bin/rg
+      - name: Build bundled Typst for Android
+        id: typst
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo install typst-cli --version 0.13.1 --locked --target "$TARGET" --root .work/android-typst
+          mkdir -p .work/bundle/resources/bin
+          cp .work/android-typst/bin/typst .work/bundle/resources/bin/typst
+      - name: Fetch platform-correct native document resources
+        shell: bash
+        run: |
+          cp "target/$TARGET/release/desktop-commander" .work/bundle/desktop-commander
+          cargo metadata --locked --format-version 1 --filter-platform "$TARGET" > .work/cargo-metadata.json
+          python scripts/vendor.py "$TARGET" --metadata .work/cargo-metadata.json
+      - name: Verify Android ELF and resource architecture
+        shell: bash
+        run: |
+          python scripts/android_verify.py
+      - name: Package Termux archive and checksums
+        shell: bash
+        run: |
+          python scripts/android_package.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-commander-android-arm64
+          path: |
+            .work/packages/android/*
+            .work/evidence/android/*
+          if-no-files-found: warn
+      - name: Summarize optional Typst support
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.typst.outcome }}" != "success" ]; then
+            echo "Android Typst cross-build failed or was skipped. Core ELF and other tools remain available; see artifact manifest." >> "$GITHUB_STEP_SUMMARY"
+          fi

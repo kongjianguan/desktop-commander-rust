@@ -26,7 +26,10 @@ impl Default for Settings {
             no_proxy: "localhost,127.0.0.1,::1".into(),
             device_name: sysinfo::System::host_name().unwrap_or_else(|| "Desktop Commander".into()),
             auto_connect: true, prevent_sleep: false, start_at_login: false,
-            tools: json!({"blockedCommands": [], "defaultShell": if cfg!(windows) {"powershell.exe"} else {"/bin/sh"},
+            tools: json!({"blockedCommands": [], "defaultShell": if cfg!(windows) {"powershell.exe".to_string()} else if cfg!(target_os="android") {
+                std::env::var("PREFIX").map(|prefix|format!("{prefix}/bin/sh")).filter(|shell|Path::new(shell).is_file())
+                    .unwrap_or_else(|_|"/system/bin/sh".to_string())
+            } else {"/bin/sh".to_string()},
                 "allowedDirectories": [], "fileReadLineLimit": 1000, "fileWriteLineLimit": 1000,
                 "telemetryEnabled": false, "defaultEditorName": "", "defaultEditorPath": ""}),
         }
