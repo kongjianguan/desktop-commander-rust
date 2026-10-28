@@ -88,6 +88,8 @@ jobs:
           DC_TEST_EXECUTABLE: ${{ github.workspace }}/.work/bundle/desktop-commander-headless${{ runner.os == 'Windows' && '.exe' || '' }}
           DC_TEST_VARIANT: headless
         run: python scripts/e2e.py
+      - name: Verify native management CLI against running agent
+        run: python scripts/cli_e2e.py
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'

@@ -52,6 +52,13 @@ impl Settings {
         }
         for key in defaults.as_object().expect("Invalid default settings").keys() {anyhow::ensure!(tools.contains_key(key),"Missing setting: {key}");}
         anyhow::ensure!(self.tools["telemetryEnabled"] == false,"Telemetry is unavailable");
+        #[cfg(target_os="android")]
+        {
+            anyhow::ensure!(!self.start_at_login,
+                "Android autostart is managed by Termux:Boot or the root manager");
+            anyhow::ensure!(!self.prevent_sleep,
+                "Android wake locks are managed by Termux:API outside Desktop Commander");
+        }
         Ok(())
     }
 }

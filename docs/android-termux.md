@@ -23,6 +23,48 @@ RUST_LOG=info desktop-commander remote --headless
 安装脚本将主 ELF 和同目录下的原生资源放到 `$HOME/.local/share/desktop-commander-rust`，
 并在 `$PREFIX/bin/desktop-commander` 建立启动包装器，不会请求 Root 或安装后台服务。
 
+## 终端管理（替代 Flutter 控制面板）
+
+在一个 Termux 会话启动 Agent（或使用自己的 Termux:Boot / KernelSU 启动脚本）；在另一个会话管理同一个后台实例。
+除 `start` 负责启动进程外，其余管理命令只访问本机的认证控制接口，不会占用第二个实例，也不会泄露本机 Bearer Token。
+`start` 的 stderr 日志位于配置目录中的 `agent.log`（私有权限）；Android 仍可能受后台进程限制杀掉 Agent，可靠保活需要单独处理。
+
+```sh
+# 一条命令启动后台 Agent
+desktop-commander start
+desktop-commander status
+# 也可以用 desktop-commander remote --headless 在前台运行
+# 在另外一个 Termux 会话使用以下命令管理
+desktop-commander status --json
+desktop-commander connect
+desktop-commander disconnect
+desktop-commander events --limit 10
+desktop-commander events --json
+desktop-commander diagnostics
+
+# 修改原本在 Flutter 界面里的选项（无需重启服务）
+desktop-commander settings show
+desktop-commander settings show --json
+desktop-commander settings get deviceName
+desktop-commander settings set deviceName 'Android Phone'
+desktop-commander settings set proxy 'socks5://127.0.0.1:10808'
+desktop-commander settings set autoConnect on
+desktop-commander settings set tools.defaultShell "$PREFIX/bin/bash"
+desktop-commander settings set tools.allowedDirectories '["/data/data/com.termux/files/home"]'
+
+# 账号与生命周期
+desktop-commander logout   # 清除本机设备授权，不等于云端撤销设备
+desktop-commander quit     # 退出整个后台进程
+```
+
+`settings show/get/set` 在 Agent 尚未启动时也能操作配置文件；如果 Agent 已经运行，则通过本机
+`127.0.0.1` 的 Bearer-auth API 更新设置。布尔值接受 `true/false`、`on/off` 等，
+数组要求 JSON 数组格式；修改在线配置会使用后台已有的设置校验及连接重启逻辑。
+`status --json`、`events --json`、`settings show --json` 可供 Agent/脚本消费。
+
+`startAtLogin` 和 `preventSleep` 为 Android 不支持的桌面语义，设置为 `true` 会被拒绝，
+请通过 Termux:Boot、KernelSU 和 Termux:API 管理。
+
 ## 功能与限制
 
 - Rust 保留原本 **26 个 MCP 工具接口**；完整运行行为仍待真实 Android 设备端对照 E2E。
