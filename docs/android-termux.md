@@ -86,7 +86,11 @@ desktop-commander quit     # 退出整个后台进程
 
 ## GitHub Actions 验证
 
-工作流使用固定 NDK 与 Rust 1.90 编译 Android ARM64 ELF、原生 ripgrep，
-尝试构建 Typst，并打包 PDFium/模板/字体及 SHA-256。验证脚本仅检查 ELF 架构、
+工作流分为互相独立的并行任务：Android ARM64 Rust Agent、原生 ripgrep、PDFium/文档资源、
+以及**可选的** Android Typst。最终打包任务仅等待前三项必需产物，通过 Actions Artifact
+下载后执行 ELF 校验并生成 Termux tar.gz 和 SHA-256。Typst 若编译成功则产生独立
+`desktop-commander-android-typst-arm64` Artifact（不会自动合并进主安装包），可提取其中的
+`resources/bin/typst` 到已安装目录的同名路径。失败不阻塞主安装包。
+使用固定 NDK 与 Rust 1.90 交叉编译；验证脚本仅检查 ELF 架构、
 Bionic 动态依赖与打包资源，**不是 Android 手机上的真实运行时测试**。
 网络授权、动态加载、Termux 权限、16 KiB page size 和 26 项工具的设备端 E2E 尚需实测。

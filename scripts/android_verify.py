@@ -1,6 +1,6 @@
 """Static cross-architecture checks; runtime E2E requires an ARM64 Android device."""
 import json
-import os
+import shutil
 from pathlib import Path
 import subprocess
 
@@ -10,8 +10,9 @@ TARGET = "aarch64-linux-android"
 
 
 def main():
-    ndk = Path(os.environ["ANDROID_NDK_HOME"])
-    readelf = ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+    # The assembler job has no NDK: binutils readelf can inspect any ELF architecture.
+    readelf = shutil.which("llvm-readelf") or shutil.which("readelf")
+    assert readelf, "readelf (binutils) is required for the final package inspection"
     binary = BUNDLE / "desktop-commander"
     pdfium = BUNDLE / "resources/libpdfium.so"
     rg = BUNDLE / "resources/bin/rg"

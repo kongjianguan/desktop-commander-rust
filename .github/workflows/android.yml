@@ -1,8 +1,9 @@
 name: Android ARM64 (Termux)
 
 on:
+  # Avoid compiling every commit twice when an open PR already runs the checks.
   push:
-    branches: [main, feat/android-termux]
+    branches: [main]
     paths:
       - '.github/workflows/android.yml'
       - 'Cargo.toml'
@@ -12,6 +13,8 @@ on:
       - 'scripts/vendor.py'
       - 'scripts/android_package.py'
       - 'scripts/android_verify.py'
+      - 'scripts/install-termux.sh'
+      - 'scripts/run-termux.sh'
       - 'resources/**'
       - 'README.md'
       - 'docs/android-termux.md'
@@ -22,24 +25,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.ref }}
-  cancel-in-progress: false
+  group: android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
+# Four independent jobs run in parallel. Only the final job assembles them.
 jobs:
-  android-arm64:
+  agent:
+    name: Rust headless agent
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 75
     env:
       TARGET: aarch64-linux-android
-      API_LEVEL: '28'
       CARGO_BUILD_JOBS: '2'
-      # Align LOAD segments for Android devices using 16 KiB kernel pages.
       RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -51,7 +51,6 @@ jobs:
         shell: bash
         run: |
           sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
           echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
@@ -60,49 +59,179 @@ jobs:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
-          key: android-arm64
-      - name: Build Android-native headless ELF
-        run: cargo build --locked --release --target "$TARGET" --no-default-features
-      - name: Build bundled ripgrep for Android
+          key: android-agent
+      - name: Compile Android/Bionic headless binary
+        run: |
+          cargo build --locked --release --target "$TARGET" --no-default-features
+          mkdir -p .work/bundle
+          cp "target/$TARGET/release/desktop-commander" .work/bundle/desktop-commander
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-component-agent
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  ripgrep:
+    name: Native ripgrep
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      TARGET: aarch64-linux-android
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android NDK
         shell: bash
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-ripgrep
+      - name: Compile native ripgrep
         run: |
           cargo install ripgrep --version 14.1.1 --locked --target "$TARGET" --root .work/android-ripgrep
           mkdir -p .work/bundle/resources/bin
           cp .work/android-ripgrep/bin/rg .work/bundle/resources/bin/rg
-      - name: Build bundled Typst for Android
-        id: typst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-component-ripgrep
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  typst:
+    name: Optional native Typst
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    continue-on-error: true
+    env:
+      TARGET: aarch64-linux-android
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-typst
+      - name: Attempt optional Typst cross-build
+        id: build
         continue-on-error: true
         shell: bash
         run: |
           cargo install typst-cli --version 0.13.1 --locked --target "$TARGET" --root .work/android-typst
           mkdir -p .work/bundle/resources/bin
           cp .work/android-typst/bin/typst .work/bundle/resources/bin/typst
-      - name: Fetch platform-correct native document resources
+      - name: Upload optional native Typst
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-commander-android-typst-arm64
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Summarize Typst availability
+        if: always()
         shell: bash
         run: |
-          cp "target/$TARGET/release/desktop-commander" .work/bundle/desktop-commander
+          if [ "${{ steps.build.outcome }}" != "success" ]; then
+            echo "Optional Android Typst unavailable. PDF creation requires a separately installed Android-compatible typst; other functions remain buildable." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  resources:
+    name: PDFium, document assets, licenses
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      TARGET: aarch64-linux-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - name: Fetch Android-native dependencies and bundled resources
+        shell: bash
+        run: |
+          mkdir -p .work
           cargo metadata --locked --format-version 1 --filter-platform "$TARGET" > .work/cargo-metadata.json
           python scripts/vendor.py "$TARGET" --metadata .work/cargo-metadata.json
-      - name: Verify Android ELF and resource architecture
-        shell: bash
-        run: |
-          python scripts/android_verify.py
-      - name: Package Termux archive and checksums
-        shell: bash
-        run: |
-          python scripts/android_package.py
       - uses: actions/upload-artifact@v4
-        if: always()
+        with:
+          name: android-component-resources
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Verify and package Termux distribution
+    needs: [agent, ripgrep, resources]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Download explicit required components: optional Typst never blocks or changes the main archive.
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-agent
+          path: .work/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-ripgrep
+          path: .work/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-resources
+          path: .work/bundle
+      - name: Validate required components
+        shell: bash
+        run: |
+          test -f .work/bundle/desktop-commander
+          test -f .work/bundle/resources/bin/rg
+          test -f .work/bundle/resources/libpdfium.so
+          test -f .work/bundle/resources/pdf.typ
+      - name: Verify Android ARM64 ELF ABI and resources
+        run: python scripts/android_verify.py
+      - name: Package Termux archive, manifest and SHA-256
+        run: python scripts/android_package.py
+      - uses: actions/upload-artifact@v4
         with:
           name: desktop-commander-android-arm64
           path: |
             .work/packages/android/*
             .work/evidence/android/*
-          if-no-files-found: warn
-      - name: Summarize optional Typst support
-        if: always()
-        shell: bash
-        run: |
-          if [ "${{ steps.typst.outcome }}" != "success" ]; then
-            echo "Android Typst cross-build failed or was skipped. Core ELF and other tools remain available; see artifact manifest." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          if-no-files-found: error
