@@ -131,7 +131,7 @@ fn docx(name: &str,args: &Value,path: &Path) -> Result<Value> {
         let start = if offset < 0 {lines.len().saturating_sub(offset.unsigned_abs() as usize)} else {offset as usize};
         let content = lines.into_iter().skip(start).take(crate::tools::number(args,"length",1000).min(10_000) as usize).collect::<Vec<_>>().join("\n");
         return Ok(json!({"content":[{"type":"text","text":content}],"structuredContent":{
-            "fileName":path.file_name().unwrap_or_default(),"filePath":path,"fileType":"unsupported"}}));
+            "fileName":path.file_name().unwrap_or_default(),"filePath":path,"fileType":"docx","mimeType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}}));
     }
     if name == "get_file_info" { return Ok(crate::tools::result(json!({"size":path.metadata()?.len(),"isFile":true,"isDirectory":false,"metadata":{"isDocx":true,"xmlParts":archive.len()}}))); }
     ensure!(name == "edit_block","Unsupported DOCX operation");
@@ -309,7 +309,7 @@ fn pdf(name: &str,args: &Value,path: &Path,work: &Path,config: &Value) -> Result
             content.push(json!({"type":"text","text":format!("<!-- Page: {} -->\n{}",page["pageNumber"],page["text"].as_str().unwrap_or_default())}));
         }
         return Ok(json!({"content":content,"structuredContent":{"fileName":path.file_name().unwrap_or_default(),
-            "filePath":path,"fileType":"unsupported"}}));
+            "filePath":path,"fileType":"pdf","mimeType":"application/pdf"}}));
     }
     ensure!(name == "write_pdf" || name == "edit_block","Unsupported PDF operation");
     for operation in args["content"].as_array().context("PDF operations must be an array")? {
