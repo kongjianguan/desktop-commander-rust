@@ -117,7 +117,7 @@ jobs:
   typst:
     name: Optional native Typst
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     continue-on-error: true
     env:
       TARGET: aarch64-linux-android
@@ -139,20 +139,26 @@ jobs:
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
           echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@1.90.0
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-typst
-      - name: Attempt optional Typst cross-build
+      - name: Build Typst with vendored Android OpenSSL
         id: build
-        continue-on-error: true
         shell: bash
         run: |
-          cargo install typst-cli --version 0.13.1 --locked --target "$TARGET" --root .work/android-typst
+          # Typst's native-tls dependency requires Android OpenSSL; host OpenSSL is not usable.
+          # Official typst-cli 0.13.1 feature: vendor-openssl -> openssl/vendored.
+          export OPENSSL_STATIC=1
+          cargo install typst-cli --version 0.13.1 --locked --features vendor-openssl --target "$TARGET" --root .work/android-typst
           mkdir -p .work/bundle/resources/bin
           cp .work/android-typst/bin/typst .work/bundle/resources/bin/typst
+          readelf -h .work/bundle/resources/bin/typst | grep -q 'AArch64'
+          ! readelf -d .work/bundle/resources/bin/typst | grep -q 'libc.so.6'
       - name: Upload optional native Typst
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
@@ -166,7 +172,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ steps.build.outcome }}" != "success" ]; then
-            echo "Optional Android Typst unavailable. PDF creation requires a separately installed Android-compatible typst; other functions remain buildable." >> "$GITHUB_STEP_SUMMARY"
+            echo "Optional Android Typst build failed (see the failed Typst build step). PDF creation requires Android-compatible typst; main distribution stays available." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   resources:
