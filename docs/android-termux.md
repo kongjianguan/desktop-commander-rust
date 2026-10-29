@@ -71,8 +71,11 @@ desktop-commander quit     # 退出整个后台进程
 - 文件、终端、进程、DOCX、XLSX 和图片功能均不需要 Debian。
 - Android 版 ripgrep 随包构建；如仅复制主 ELF，也可以在 Termux 执行 `pkg install ripgrep`。
 - PDFium 为 Android ARM64 专用 `libpdfium.so`，不能使用桌面 Linux 版。
-- PDF **生成**依赖 Android 版 Typst。CI 尝试交叉编译，但这个步骤不阻止基础包产出：
-  检查 `manifest.json` 的 `features.typstBundled`。若为 `false`，需自行提供 Termux 中可运行的 `typst` 才能创建 PDF；PDF 阅读与修改仍依赖随包提供的 PDFium。
+- PDF **生成**依赖 Android 版 Typst。最简单的安装方式是 `pkg install typst`；
+  Termux 主仓库的 ARM64 Typst 0.15.1 已在 Android 16 实机与此项目的 `cmarker` 模板配合测试通过（中文 PDF 创建、PDFium 回读）。
+  该可执行文件仅在生成 PDF 时启动，不增加 Agent 常驻内存。发行包中的 `manifest.json`
+  可能显示 `features.typstBundled=false`，但只要 `$PREFIX/bin/typst` 可执行，仍可通过 `PATH` 回退正常生成。
+  PDF 阅读与修改只依赖随包提供的 PDFium。
 - 这不是 Android APK：没有桌面系统托盘或 Flutter 管理窗口。
 - Android 后台持久运行不由二进制自动保证。休眠控制可由 Termux:API 的 `termux-wake-lock` 完成；开机启动可由 Termux:Boot 或 KernelSU 服务完成，但这两者都未自动启用。
 - 默认 shell 优先 `$PREFIX/bin/sh`，否则回退 `/system/bin/sh`。应保留 Termux 环境变量。
@@ -88,9 +91,20 @@ desktop-commander quit     # 退出整个后台进程
 
 工作流分为互相独立的并行任务：Android ARM64 Rust Agent、原生 ripgrep、PDFium/文档资源、
 以及**可选的** Android Typst。最终打包任务仅等待前三项必需产物，通过 Actions Artifact
-下载后执行 ELF 校验并生成 Termux tar.gz 和 SHA-256。Typst 若编译成功则产生独立
-`desktop-commander-android-typst-arm64` Artifact（不会自动合并进主安装包），可提取其中的
-`resources/bin/typst` 到已安装目录的同名路径。失败不阻塞主安装包。
+下载后执行 ELF 校验并生成 Termux tar.gz 和 SHA-256。Typst Job 不再编译复杂的 OpenSSL 依赖树：
+它下载 Termux 官方主仓库的 aarch64 原生 Typst 0.15.1 .deb，验证**固定 SHA-256** 和 ELF 架构后输出
+`desktop-commander-android-typst-arm64` 独立 Artifact，不会自动合并进主安装包。
+如需离线安装，可把此附件的 `resources/bin/typst` 提取到已安装目录的同名路径；运行时依赖
+Termux 的 `openssl` 包。在线设备直接运行 `pkg install typst` 更简单。可选附件失败不阻塞主安装包。
 使用固定 NDK 与 Rust 1.90 交叉编译；验证脚本仅检查 ELF 架构、
 Bionic 动态依赖与打包资源，**不是 Android 手机上的真实运行时测试**。
 网络授权、动态加载、Termux 权限、16 KiB page size 和 26 项工具的设备端 E2E 尚需实测。
+
+## Android 实机测试记录（2026-10-29）
+
+在 Android 16 / Termux / KernelSU 设备上，26 个 MCP 工具中已有 24 项可调用工具实测通过；
+另两项 `get_prompts`、`give_feedback_to_desktop_commander` 未暴露在当前远程 API，尚未测试。
+验证覆盖文件写入与编辑、ripgrep 搜索与分页、XLSX 读写、DOCX 生成与 XML 修改、PDFium 读取/插页/删页、图片读取、终端交互/进程终止、CLI 生命周期、`su -c id`。
+安装 Termux Typst 0.15.1 后，`write_pdf` 已成功生成含中文的 PDF 并经 PDFium 回读验证。
+旧二进制读取 PDF/DOCX 时的 `structuredContent.fileType=unsupported` 属于元数据误标，
+源码已修复为 `pdf`/`docx` 并附 MIME 类型；此修复需要安装**更新后的 Agent** 才能观察到。
