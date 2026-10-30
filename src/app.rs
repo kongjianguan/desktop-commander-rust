@@ -213,7 +213,10 @@ impl App {
         } }
         if let Some(gui)=slot.take() {gui.task.await??;}
         let executable = crate::platform::gui_executable()?;
-        let mut child = tokio::process::Command::new(executable)
+        let mut command = tokio::process::Command::new(&executable);
+        #[cfg(windows)]
+        command.current_dir(executable.parent().context("GUI executable directory missing")?);
+        let mut child = command
             .env("DC_DESCRIPTOR", self.dir.join("control.json"))
             .kill_on_drop(true).spawn()?;
         let cancel = self.shutdown.child_token();

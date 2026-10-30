@@ -1,8 +1,10 @@
-"""Exercise the management CLI against a real local headless Rust control server."""
+import configparser
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +41,65 @@ def status_running():
     return json.loads(call("status", "--json")).get("running") is True
 
 
+def startup_entry():
+    if os.name == "nt":
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+        except FileNotFoundError:
+            return None
+        with key:
+            try:
+                return winreg.QueryValueEx(key, "DesktopCommanderRust")[0]
+            except FileNotFoundError:
+                return None
+    if sys.platform == "darwin":
+        path = Path.home() / "Library/LaunchAgents/app.desktopcommander.rust.plist"
+        if not path.is_file():
+            return None
+        with path.open("rb") as source:
+            return plistlib.load(source).get("ProgramArguments")
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    path = config_home / "autostart/desktop-commander-rust.desktop"
+    if not path.is_file():
+        return None
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path, encoding="utf-8")
+    return parser.get("Desktop Entry", "Exec", fallback=None)
+
+
+def assert_startup_entry(entry):
+    if sys.platform == "darwin":
+        assert entry == [str(EXE), "--config-dir", str(CONFIG), "remote"], entry
+    elif os.name == "nt":
+        expected = f'"{EXE}" --config-dir "{CONFIG}" remote'
+        assert entry == expected, entry
+    else:
+        escaped = lambda path: str(path).replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$").replace("%", "%%")
+        expected = f'"{escaped(EXE)}" --config-dir "{escaped(CONFIG)}" remote'
+        assert entry == expected, entry
+
+
+def verify_startup_setting():
+    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
+        record("native login startup verification skipped outside GitHub Actions", skipped=True)
+        return
+
+    record("offline startAtLogin creates native login startup entry")
+    assert startup_entry() is None, "GitHub Actions runner already has a Desktop Commander startup entry"
+    try:
+        call("settings", "set", "startAtLogin", "true")
+        assert_startup_entry(startup_entry())
+        complete("offline startAtLogin creates native login startup entry", passed=True,
+                 native_entry=startup_entry())
+    finally:
+        record("offline startAtLogin removal cleans native login startup entry")
+        call("settings", "set", "startAtLogin", "false")
+        assert startup_entry() is None
+        complete("offline startAtLogin removal cleans native login startup entry", passed=True)
+
+
 def main():
     CONFIG.mkdir(parents=True, exist_ok=True)
     for path in CONFIG.iterdir():
@@ -58,6 +119,7 @@ def main():
     call("settings", "set", "autoConnect", "nonsense", success=False)
     call("settings", "set", "unknownSetting", "x", success=False)
     complete("offline settings read and write", passed=True)
+    verify_startup_setting()
 
     record("direct headless agent launch")
     with (CONFIG / "agent-stderr.log").open("w") as log:

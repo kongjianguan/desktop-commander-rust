@@ -480,6 +480,7 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
                     );
                 }
                 SettingsAction::Set { key, value } => {
+                    let previous: Settings = serde_json::from_value(data.clone())?;
                     assign(&mut data, key, value)?;
                     let updated: Settings = serde_json::from_value(data.clone())?;
                     updated.validate()?;
@@ -491,6 +492,9 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
                             .await?;
                     } else {
                         crate::app::private_dir(dir)?;
+                        if updated.start_at_login != previous.start_at_login {
+                            crate::platform::autostart(updated.start_at_login, dir)?;
+                        }
                         atomic_json(&dir.join("settings.json"), &updated)?;
                     }
                     println!("Updated {key}");

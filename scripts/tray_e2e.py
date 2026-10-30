@@ -8,6 +8,21 @@ import urllib.request
 
 import psutil
 
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, ctypes.c_ssize_t)
+    user32.EnumWindows.argtypes = [EnumWindowsProc, ctypes.c_ssize_t]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, ctypes.c_ssize_t]
+    user32.PostMessageW.restype = wintypes.BOOL
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work/tray-e2e"
@@ -23,6 +38,23 @@ def main():
         executable = ROOT / ".work/macos/Desktop Commander.app/Contents/MacOS/desktop-commander"
     executable = Path(os.environ.get("DC_TEST_EXECUTABLE", executable))
     report = {"commit":os.environ.get("GITHUB_SHA"),"passed":False,"connected":False,"desktopHost":os.environ.get("XDG_CURRENT_DESKTOP",sys.platform)}
+
+    def visible_window(pid):
+        windows = []
+
+        @EnumWindowsProc
+        def visit(hwnd, _lparam):
+            if user32.IsWindowVisible(hwnd):
+                window_pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+                if window_pid.value == pid:
+                    windows.append(hwnd)
+            return True
+
+        if not user32.EnumWindows(visit, 0):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return windows
+
     with (EVIDENCE / "tray-stderr.log").open("w") as errors:
         child = subprocess.Popen([str(executable),"--config-dir",str(WORK),"remote"],stderr=errors)
         try:
@@ -52,15 +84,32 @@ def main():
                 for _ in range(200):
                     guis = [p for p in process.children() if p.name().lower() in ["desktop_commander","desktop_commander.exe"]]
                     if guis:
-                        time.sleep(1)
-                        assert guis[0].is_running()
-                        return guis[0]
+                        gui = guis[0]
+                        if os.name == "nt":
+                            windows = visible_window(gui.pid)
+                            if windows:
+                                time.sleep(1)
+                                assert gui.is_running()
+                                windows = visible_window(gui.pid)
+                                assert windows
+                                report.setdefault("visibleGuiWindows", []).append(
+                                    {"pid": gui.pid, "hwnd": hex(int(windows[0]))}
+                                )
+                                return gui, windows[0]
+                        else:
+                            time.sleep(1)
+                            assert gui.is_running()
+                            return gui, None
                     time.sleep(0.1)
-                raise AssertionError("Flutter process did not start")
+                raise AssertionError("Flutter process did not create a visible window")
 
             request("gui")
-            first = find_gui()
-            first.terminate()
+            first, first_window = find_gui()
+            if os.name == "nt":
+                if not user32.PostMessageW(first_window, 0x0010, 0, 0):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            else:
+                first.terminate()
             first.wait(timeout=15)
             assert request("status")["pid"] == child.pid
             assert not process.children()
@@ -82,7 +131,7 @@ def main():
             report["idleTrayMemory"] = {"metric":metric,"samplesBytes":samples,"maxMiB":max(samples)/1024**2}
             assert max(samples) <= 50*1024**2,report["idleTrayMemory"]
             request("gui")
-            second = find_gui()
+            second, _ = find_gui()
             assert second.pid != first.pid
             request("gui")
             time.sleep(0.5)
