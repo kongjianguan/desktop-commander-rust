@@ -70,7 +70,7 @@ fn main() -> Result<()> {
         #[cfg(target_os="android")]
         {
             // Termux owns this home directory; never default to a system-wide or root-owned path.
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_else(||"/data/local/tmp".into()))
+            PathBuf::from(std::env::var_os("HOME").expect("Termux HOME environment variable is missing"))
                 .join(".config/desktop-commander-rust")
         }
         #[cfg(not(target_os="android"))]
