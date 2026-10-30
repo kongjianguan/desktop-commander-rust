@@ -58,7 +58,7 @@ tao = { version = "0.34", optional = true }
 ksni = { version = "0.3.7", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_System_Power"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Power"] }
 
 [profile.release]
 opt-level = "s"

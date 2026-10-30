@@ -1,0 +1,215 @@
+name: Android ARM64 (Termux)
+
+on:
+  # Avoid compiling every commit twice when an open PR already runs the checks.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'src/**'
+      - 'scripts/vendor.py'
+      - 'scripts/android_package.py'
+      - 'scripts/android_verify.py'
+      - 'scripts/install-termux.sh'
+      - 'scripts/run-termux.sh'
+      - 'resources/**'
+      - 'README.md'
+      - 'docs/android-termux.md'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Four independent jobs run in parallel. Only the final job assembles them.
+jobs:
+  agent:
+    name: Rust headless agent
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      TARGET: aarch64-linux-android
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-agent
+      - name: Compile Android/Bionic headless binary
+        run: |
+          cargo build --locked --release --target "$TARGET" --no-default-features
+          mkdir -p .work/bundle
+          cp "target/$TARGET/release/desktop-commander" .work/bundle/desktop-commander
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-component-agent
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  ripgrep:
+    name: Native ripgrep
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      TARGET: aarch64-linux-android
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-ripgrep
+      - name: Compile native ripgrep
+        run: |
+          cargo install ripgrep --version 14.1.1 --locked --target "$TARGET" --root .work/android-ripgrep
+          mkdir -p .work/bundle/resources/bin
+          cp .work/android-ripgrep/bin/rg .work/bundle/resources/bin/rg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-component-ripgrep
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  typst:
+    name: Optional Typst from verified Termux package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    # Typst stays independent: a failed optional download must not block the core agent.
+    continue-on-error: true
+    steps:
+      - name: Fetch official Android-native Typst and check SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Exact package metadata from Termux aarch64 main repository, 0.15.1.
+          # No Debian/chroot/PRoot and no host-architecture Typst binaries.
+          url="https://packages.termux.dev/apt/termux-main/pool/main/t/typst/typst_0.15.1_aarch64.deb"
+          curl --fail --location --retry 3 --output /tmp/typst-termux.deb "$url"
+          echo "79ef02ae0aee0e84625d345c8f53c5100e2287c57d6c1aacb719c84d1b07e2c4  /tmp/typst-termux.deb" | sha256sum --check -
+          mkdir -p .work/termux-package .work/bundle/resources/bin
+          dpkg-deb --extract /tmp/typst-termux.deb .work/termux-package
+          cp .work/termux-package/data/data/com.termux/files/usr/bin/typst .work/bundle/resources/bin/typst
+          chmod 755 .work/bundle/resources/bin/typst
+          readelf -h .work/bundle/resources/bin/typst | grep -q AArch64
+          if readelf -d .work/bundle/resources/bin/typst | grep -q 'libc.so.6'; then
+            echo "::error::Typst is linked against host glibc instead of Android Bionic"
+            exit 1
+          fi
+          printf "Termux Typst 0.15.1, SHA-256 verified. Runtime dependency: Termux openssl.\n" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-commander-android-typst-arm64
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  resources:
+    name: PDFium, document assets, licenses
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      TARGET: aarch64-linux-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - name: Fetch Android-native dependencies and bundled resources
+        shell: bash
+        run: |
+          mkdir -p .work
+          cargo metadata --locked --format-version 1 --filter-platform "$TARGET" > .work/cargo-metadata.json
+          python scripts/vendor.py "$TARGET" --metadata .work/cargo-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-component-resources
+          path: .work/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Verify and package Termux distribution
+    needs: [agent, ripgrep, resources]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Download explicit required components: optional Typst never blocks or changes the main archive.
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-agent
+          path: .work/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-ripgrep
+          path: .work/bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-component-resources
+          path: .work/bundle
+      - name: Validate required components
+        shell: bash
+        run: |
+          test -f .work/bundle/desktop-commander
+          test -f .work/bundle/resources/bin/rg
+          test -f .work/bundle/resources/libpdfium.so
+          test -f .work/bundle/resources/pdf.typ
+      - name: Verify Android ARM64 ELF ABI and resources
+        run: python scripts/android_verify.py
+      - name: Package Termux archive, manifest and SHA-256
+        run: python scripts/android_package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-commander-android-arm64
+          path: |
+            .work/packages/android/*
+            .work/evidence/android/*
+          if-no-files-found: error

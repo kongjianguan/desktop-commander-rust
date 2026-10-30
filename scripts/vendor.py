@@ -43,6 +43,7 @@ def main():
     target = args.target
     windows = "windows" in target
     mac = "apple" in target
+    android = "android" in target
     arm = target.startswith("aarch64")
     bundle = ROOT / args.bundle
     resources = bundle / "resources"
@@ -51,17 +52,18 @@ def main():
     cache = ROOT / ".work/vendor" / target
     cache.mkdir(parents=True, exist_ok=True)
     suffix = ".exe" if windows else ""
-    typst_target = target if mac or windows else "x86_64-unknown-linux-musl"
-    typst_asset = f"typst-{typst_target}.{'zip' if windows else 'tar.xz'}"
-    typst = fetch(f"https://github.com/typst/typst/releases/download/v0.13.1/{typst_asset}", cache / typst_asset)
-    unpack(typst, cache / "typst")
-    shutil.copy2(next((cache / "typst").rglob(f"typst{suffix}")), binary / f"typst{suffix}")
-    rg_target = target if mac or windows else "x86_64-unknown-linux-musl"
-    rg_asset = f"ripgrep-14.1.1-{rg_target}.{'zip' if windows else 'tar.gz'}"
-    rg = fetch(f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/{rg_asset}", cache / rg_asset)
-    unpack(rg, cache / "ripgrep")
-    shutil.copy2(next((cache / "ripgrep").rglob(f"rg{suffix}")), binary / f"rg{suffix}")
-    pdf_platform = "win" if windows else "mac" if mac else "linux"
+    if not android:
+        typst_target = target if mac or windows else "x86_64-unknown-linux-musl"
+        typst_asset = f"typst-{typst_target}.{'zip' if windows else 'tar.xz'}"
+        typst = fetch(f"https://github.com/typst/typst/releases/download/v0.13.1/{typst_asset}", cache / typst_asset)
+        unpack(typst, cache / "typst")
+        shutil.copy2(next((cache / "typst").rglob(f"typst{suffix}")), binary / f"typst{suffix}")
+        rg_target = target if mac or windows else "x86_64-unknown-linux-musl"
+        rg_asset = f"ripgrep-14.1.1-{rg_target}.{'zip' if windows else 'tar.gz'}"
+        rg = fetch(f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/{rg_asset}", cache / rg_asset)
+        unpack(rg, cache / "ripgrep")
+        shutil.copy2(next((cache / "ripgrep").rglob(f"rg{suffix}")), binary / f"rg{suffix}")
+    pdf_platform = "android" if android else "win" if windows else "mac" if mac else "linux"
     pdf_asset = f"pdfium-{pdf_platform}-{'arm64' if arm else 'x64'}.tgz"
     pdfium = fetch(f"https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7350/{pdf_asset}", cache / pdf_asset)
     unpack(pdfium, cache / "pdfium")
@@ -80,7 +82,7 @@ def main():
     shutil.copy2(ROOT / "resources/pdf.typ", resources / "pdf.typ")
     licenses = resources / "licenses"
     licenses.mkdir(exist_ok=True)
-    for component in ["typst", "ripgrep", "pdfium"]:
+    for component in (["pdfium"] if android else ["typst", "ripgrep", "pdfium"]):
         folder = licenses / component
         folder.mkdir(exist_ok=True)
         for item in (cache / component).rglob("*"):

@@ -16,8 +16,15 @@ pub fn resources() -> Result<PathBuf> {
 }
 pub fn bundled(name:&str) -> Result<PathBuf> {
     let name = if cfg!(windows) {format!("{name}.exe")} else {name.into()};
-    let path = if let Some(contents) = mac_contents()? {contents.join("Helpers").join(name)} else {resources()?.join("bin").join(name)};
-    ensure!(path.is_file(),"Bundled executable missing: {}",path.display()); Ok(path)
+    let path = if let Some(contents) = mac_contents()? {contents.join("Helpers").join(&name)} else {resources()?.join("bin").join(&name)};
+    if path.is_file() { return Ok(path); }
+    // On Android a Termux package can provide external tools without bundling
+    // host-Linux executables that cannot run against Android's Bionic libc.
+    #[cfg(target_os="android")]
+    if let Some(found) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).map(|dir|dir.join(&name)).find(|candidate| candidate.is_file())
+    }) { return Ok(found); }
+    anyhow::bail!("Bundled executable missing: {} (on Android, install {} in Termux)",path.display(),name)
 }
 pub fn gui_executable() -> Result<PathBuf> {
     if let Some(contents) = mac_contents()? {
@@ -87,8 +94,12 @@ impl SleepGuard {
         let child = Command::new("/usr/bin/caffeinate").args(["-i","-w",&std::process::id().to_string()]).spawn()?;
         #[cfg(target_os="linux")]
         let child = Command::new("systemd-inhibit").args(["--what=sleep","--why=Desktop Commander remote connection","--mode=block","sleep","infinity"]).spawn()?;
-        #[cfg(not(windows))]
-        Ok(Self {child:Some(child)})
+        #[cfg(any(target_os="macos",target_os="linux"))]
+        return Ok(Self {child:Some(child)});
+        #[cfg(target_os="android")]
+        anyhow::bail!("Android sleep prevention is managed by Termux; use termux-wake-lock outside Desktop Commander");
+        #[cfg(not(any(windows,target_os="macos",target_os="linux",target_os="android")))]
+        Ok(Self {child:None})
     }
 }
 impl Drop for SleepGuard { fn drop(&mut self) {
@@ -100,7 +111,11 @@ impl Drop for SleepGuard { fn drop(&mut self) {
 } }
 
 pub fn autostart(enabled:bool,dir:&Path) -> Result<()> {
+    #[cfg(target_os="android")]
+    if enabled { anyhow::bail!("Configure autostart through Termux:Boot or your root manager, not a Linux XDG desktop entry"); }
     let exe = std::env::current_exe()?;
+    #[cfg(target_os="android")]
+    let _ = (&exe, dir);
     #[cfg(target_os="macos")] {
         let home = directories::BaseDirs::new().context("Home unavailable")?;
         let folder = home.home_dir().join("Library/LaunchAgents"); std::fs::create_dir_all(&folder)?;

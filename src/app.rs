@@ -26,7 +26,10 @@ impl Default for Settings {
             no_proxy: "localhost,127.0.0.1,::1".into(),
             device_name: sysinfo::System::host_name().unwrap_or_else(|| "Desktop Commander".into()),
             auto_connect: true, prevent_sleep: false, start_at_login: false,
-            tools: json!({"blockedCommands": [], "defaultShell": if cfg!(windows) {"powershell.exe"} else {"/bin/sh"},
+            tools: json!({"blockedCommands": [], "defaultShell": if cfg!(windows) {"powershell.exe".to_string()} else if cfg!(target_os="android") {
+                std::env::var("PREFIX").ok().map(|prefix|format!("{prefix}/bin/sh")).filter(|shell|Path::new(shell).is_file())
+                    .unwrap_or_else(||"/system/bin/sh".to_string())
+            } else {"/bin/sh".to_string()},
                 "allowedDirectories": [], "fileReadLineLimit": 1000, "fileWriteLineLimit": 1000,
                 "telemetryEnabled": false, "defaultEditorName": "", "defaultEditorPath": ""}),
         }
@@ -49,6 +52,13 @@ impl Settings {
         }
         for key in defaults.as_object().expect("Invalid default settings").keys() {anyhow::ensure!(tools.contains_key(key),"Missing setting: {key}");}
         anyhow::ensure!(self.tools["telemetryEnabled"] == false,"Telemetry is unavailable");
+        #[cfg(target_os="android")]
+        {
+            anyhow::ensure!(!self.start_at_login,
+                "Android autostart is managed by Termux:Boot or the root manager");
+            anyhow::ensure!(!self.prevent_sleep,
+                "Android wake locks are managed by Termux:API outside Desktop Commander");
+        }
         Ok(())
     }
 }

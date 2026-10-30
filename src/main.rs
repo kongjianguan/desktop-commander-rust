@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows,feature="tray"),windows_subsystem="windows")]
 
 mod app;
+mod cli;
 mod control;
 mod documents;
 mod mcp;
@@ -30,8 +31,34 @@ enum Command {
     Remote { #[arg(long)] headless: bool },
     Stdio,
     Gui,
+    /// Launch the headless agent in the background
+    Start,
+    /// Show running connection details (works without a running agent)
+    Status { #[arg(long)] json: bool },
+    /// Connect the running agent to the remote service
+    Connect,
+    /// Disconnect the running agent from the remote service
+    Disconnect,
+    /// View or edit settings, including when the agent is stopped
+    Settings { #[command(subcommand)] action: SettingsAction },
+    /// Show recent tool calls recorded by the running agent
+    Events { #[arg(long, default_value_t=20)] limit: usize, #[arg(long)] json: bool },
+    /// Export diagnostic data from the running agent
+    Diagnostics,
+    /// Stop the local headless agent
+    Quit,
     Logout,
     DocumentWorker,
+}
+
+#[derive(Subcommand)]
+enum SettingsAction {
+    /// View saved settings
+    Show { #[arg(long)] json: bool },
+    /// Read a setting such as proxy, autoConnect, tools.defaultShell
+    Get { key: String },
+    /// Set a setting (booleans accept on/off; arrays accept JSON)
+    Set { key: String, value: String },
 }
 
 fn main() -> Result<()> {
@@ -39,10 +66,29 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
     let cli = Cli::parse();
     if matches!(cli.command, Some(Command::DocumentWorker)) { return documents::worker(); }
-    let dir = cli.config_dir.unwrap_or_else(|| directories::ProjectDirs::from("app", "DesktopCommander", "DesktopCommanderRust")
-        .expect("User configuration directory unavailable").config_dir().to_owned());
+    let dir = cli.config_dir.unwrap_or_else(|| {
+        #[cfg(target_os="android")]
+        {
+            // Termux owns this home directory; never default to a system-wide or root-owned path.
+            PathBuf::from(std::env::var_os("HOME").expect("Termux HOME environment variable is missing"))
+                .join(".config/desktop-commander-rust")
+        }
+        #[cfg(not(target_os="android"))]
+        {
+            directories::ProjectDirs::from("app", "DesktopCommander", "DesktopCommanderRust")
+                .expect("User configuration directory unavailable").config_dir().to_owned()
+        }
+    });
     if matches!(cli.command, Some(Command::Gui)) { return control::open_existing(&dir); }
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
+    if let Some(command) = cli.command.as_ref() {
+        if matches!(command,
+            Command::Start | Command::Status {..} | Command::Connect | Command::Disconnect |
+            Command::Settings {..} | Command::Events {..} | Command::Diagnostics |
+            Command::Quit | Command::Logout) {
+            return runtime.block_on(cli::run(command, &dir));
+        }
+    }
     let app = match app::App::load(dir.clone()) {
         Ok(app) => app,
         Err(error) if !matches!(cli.command,Some(Command::Stdio|Command::Logout|Command::Remote{headless:true})) &&
@@ -51,9 +97,6 @@ fn main() -> Result<()> {
             }
         Err(error) => return Err(error),
     };
-    if matches!(cli.command, Some(Command::Logout)) {
-        let path = app.dir.join("session.json"); if path.exists() { std::fs::remove_file(path)?; } return Ok(());
-    }
     let signals = app.clone();
     runtime.spawn(async move {
         tokio::select! {
