@@ -8,6 +8,69 @@ use crate::{
     app::{Settings, atomic_json},
 };
 
+#[cfg(windows)]
+fn spawn_agent_without_inheriting_parent_stdio(
+    command: &mut std::process::Command,
+) -> Result<std::process::Child> {
+    use windows_sys::Win32::{
+        Foundation::{
+            GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+            SetHandleInformation,
+        },
+        System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
+    };
+
+    let mut handles: Vec<(HANDLE, u32)> = Vec::new();
+    for standard in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(standard) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        let mut flags = 0;
+        anyhow::ensure!(
+            unsafe { GetHandleInformation(handle, &mut flags) } != 0,
+            "Unable to inspect standard handle inheritance: {}",
+            std::io::Error::last_os_error()
+        );
+        if flags & HANDLE_FLAG_INHERIT != 0 {
+            anyhow::ensure!(
+                unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } != 0,
+                "Unable to prevent background agent from inheriting a standard handle: {}",
+                std::io::Error::last_os_error()
+            );
+            handles.push((handle, flags));
+        }
+    }
+
+    let spawn_result = command.spawn();
+    let mut restore_error = None;
+    for (handle, flags) in handles {
+        if unsafe {
+            SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags & HANDLE_FLAG_INHERIT)
+        } == 0
+        {
+            restore_error.get_or_insert_with(std::io::Error::last_os_error);
+        }
+    }
+    if let Some(error) = restore_error {
+        let mut child = spawn_result.context("Unable to launch background agent")?;
+        if child
+            .try_wait()
+            .context("Unable to inspect agent after restoring standard handles")?
+            .is_none()
+        {
+            child
+                .kill()
+                .context("Unable to terminate agent after restoring standard handles")?;
+            child
+                .wait()
+                .context("Unable to reap agent after restoring standard handles")?;
+        }
+        return Err(error).context("Unable to restore standard handle inheritance");
+    }
+    spawn_result.context("Unable to launch background agent")
+}
+
 struct ControlClient {
     http: Client,
     endpoint: Url,
@@ -284,6 +347,9 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
                 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
                 launch.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
             }
+            #[cfg(windows)]
+            let mut child = spawn_agent_without_inheriting_parent_stdio(&mut launch)?;
+            #[cfg(not(windows))]
             let mut child = launch
                 .spawn()
                 .context("Unable to launch background agent")?;

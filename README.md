@@ -31,7 +31,7 @@ PDF 操作支持插入和删除页面。原生依赖随发行包提供，无需�
 
 原生 Android/Bionic headless Agent 由单独的 GitHub Actions 工作流交叉编译，不依赖 Debian、PRoot 或 Node.js。下载 workflow artifact 并直接在 Termux 中运行；Android 版 PDFium 随包提供，ripgrep 原生交叉编译，Typst 是尽力构建的可选组件。
 
-详见 [Termux 安装、Root 安全与验证说明](docs/android-termux.md)。Android 目前只做静态 ELF/资源检查，尚未完成实体设备端 E2E。
+详见 [Termux 安装、Root 安全与验证说明](docs/android-termux.md)。GitHub Actions 执行 ELF/资源检查；Android 16 实机已验证 24 项可调用工具，未覆盖项记录在文档中。
 
 ## 构建与验证
 
