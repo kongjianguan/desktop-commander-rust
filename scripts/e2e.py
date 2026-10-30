@@ -151,7 +151,9 @@ async def mcp_flow():
                 original = zipfile.ZipFile(docx)
                 untouched = {name: original.read(name) for name in original.namelist() if name != "word/document.xml"}
                 original.close()
-                await call("read_file", path=str(docx))
+                docx_content = structured(await call("read_file", path=str(docx)))
+                assert docx_content["fileType"] == "docx"
+                assert docx_content["mimeType"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 await call("edit_block", file_path=str(docx), old_string="Original paragraph", new_string="Changed paragraph")
                 assert "Changed paragraph" in "\n".join(p.text for p in Document(docx).paragraphs)
                 with zipfile.ZipFile(docx) as archive:
@@ -180,6 +182,8 @@ async def mcp_flow():
                 assert len(reader.pages[0].images) > 0
                 extracted = await call("read_file", path=str(pdf), offset=0, length=1)
                 assert any(content.type == "image" for content in extracted.content)
+                assert structured(extracted)["fileType"] == "pdf"
+                assert structured(extracted)["mimeType"] == "application/pdf"
                 await call("write_pdf", path=str(pdf), content=[{"type":"insert","pageIndex":1,"markdown":"Inserted page"}])
                 assert len(PdfReader(pdf).pages) == 2
                 await call("write_pdf", path=str(pdf), content=[{"type":"delete","pageIndexes":[0]}])

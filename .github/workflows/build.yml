@@ -89,6 +89,7 @@ jobs:
           DC_TEST_VARIANT: headless
         run: python scripts/e2e.py
       - name: Verify native management CLI against running agent
+        timeout-minutes: 5
         run: python scripts/cli_e2e.py
       - uses: subosito/flutter-action@v2
         with:

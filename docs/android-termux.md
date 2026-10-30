@@ -67,7 +67,7 @@ desktop-commander quit     # 退出整个后台进程
 
 ## 功能与限制
 
-- Rust 保留原本 **26 个 MCP 工具接口**；完整运行行为仍待真实 Android 设备端对照 E2E。
+- Rust 保留原本 **26 个 MCP 工具接口**；截至 2026-10-29，Android 16 实机已验证其中 24 项可调用工具。
 - 文件、终端、进程、DOCX、XLSX 和图片功能均不需要 Debian。
 - Android 版 ripgrep 随包构建；如仅复制主 ELF，也可以在 Termux 执行 `pkg install ripgrep`。
 - PDFium 为 Android ARM64 专用 `libpdfium.so`，不能使用桌面 Linux 版。
@@ -96,9 +96,8 @@ desktop-commander quit     # 退出整个后台进程
 `desktop-commander-android-typst-arm64` 独立 Artifact，不会自动合并进主安装包。
 如需离线安装，可把此附件的 `resources/bin/typst` 提取到已安装目录的同名路径；运行时依赖
 Termux 的 `openssl` 包。在线设备直接运行 `pkg install typst` 更简单。可选附件失败不阻塞主安装包。
-使用固定 NDK 与 Rust 1.90 交叉编译；验证脚本仅检查 ELF 架构、
-Bionic 动态依赖与打包资源，**不是 Android 手机上的真实运行时测试**。
-网络授权、动态加载、Termux 权限、16 KiB page size 和 26 项工具的设备端 E2E 尚需实测。
+使用固定 NDK 与 Rust 1.90 交叉编译；工作流会检查 ELF 架构、Bionic 动态依赖与打包资源。
+这些构建检查与 Android 实机 E2E 互相补充，实机测试记录列出已覆盖功能与未覆盖工具。
 
 ## Android 实机测试记录（2026-10-29）
 

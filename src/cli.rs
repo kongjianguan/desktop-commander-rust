@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use reqwest::{Client, Method, Url};
 use serde_json::{Value, json};
-use std::{fs::File, path::Path, time::Duration};
+use std::{fs::{File, OpenOptions}, path::Path, time::Duration};
 
 use crate::{
     Command, SettingsAction,
@@ -89,6 +89,46 @@ fn offline_settings(dir: &Path) -> Result<Settings> {
     let settings: Settings = serde_json::from_reader(File::open(path)?)?;
     settings.validate()?;
     Ok(settings)
+}
+
+fn instance_lock(dir: &Path) -> Result<Option<File>> {
+    crate::app::private_dir(dir)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("instance.lock"))?;
+    match fs2::FileExt::try_lock_exclusive(&lock) {
+        Ok(()) => Ok(Some(lock)),
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn local_status(
+    client: &ControlClient,
+    dir: &Path,
+) -> Result<(Option<Value>, Option<File>)> {
+    match client.status().await {
+        Ok(status) => Ok((Some(status), None)),
+        Err(api_error) => match instance_lock(dir)? {
+            Some(lock) => Ok((None, Some(lock))),
+            None => Err(api_error),
+        },
+    }
+}
+
+fn stopped_status(json_output: bool) -> Result<()> {
+    let status = json!({"running": false, "state": "stopped"});
+    if json_output {
+        println!("{}", pretty(&status)?);
+    } else {
+        println!("Desktop Commander is not running");
+    }
+    Ok(())
 }
 
 fn lookup<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
@@ -200,9 +240,16 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
     match command {
         Command::Start => {
             if let Some(client) = ControlClient::open(dir)? {
-                if let Ok(status) = client.status().await {
-                    println!("Agent already running (PID {})", status["pid"]);
-                    return Ok(());
+                match client.status().await {
+                    Ok(status) => {
+                        println!("Agent already running (PID {})", status["pid"]);
+                        return Ok(());
+                    }
+                    Err(api_error) => {
+                        if instance_lock(dir)?.is_none() {
+                            return Err(api_error);
+                        }
+                    }
                 }
             }
             crate::app::private_dir(dir)?;
@@ -230,48 +277,76 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
                 use std::os::unix::process::CommandExt;
                 launch.process_group(0);
             }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x0000_0008;
+                const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+                launch.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            }
             let mut child = launch
                 .spawn()
                 .context("Unable to launch background agent")?;
-            for _ in 0..60 {
-                if let Some(status) = child.try_wait()? {
-                    bail!(
-                        "Agent exited immediately ({status}); see {}",
-                        log_path.display()
-                    );
-                }
-                if let Some(client) = ControlClient::open(dir)? {
-                    if let Ok(snapshot) = client.status().await {
-                        println!(
-                            "Agent started (PID {}). Log: {}",
-                            snapshot["pid"],
+            let readiness = tokio::time::timeout(Duration::from_secs(6), async {
+                loop {
+                    if let Some(status) = child.try_wait()? {
+                        bail!(
+                            "Agent exited before becoming ready ({status}); see {}",
                             log_path.display()
                         );
-                        return Ok(());
+                    }
+                    if let Some(client) = ControlClient::open(dir)? {
+                        if let Ok(snapshot) = client.status().await {
+                            return Ok(snapshot);
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await;
+            let snapshot = match readiness {
+                Ok(result) => result?,
+                Err(_) => {
+                    match child.try_wait()? {
+                        Some(status) => bail!(
+                            "Agent exited before becoming ready ({status}); see {}",
+                            log_path.display()
+                        ),
+                        None => {
+                            if let Err(kill_error) = child.kill() {
+                                if child.try_wait()?.is_none() {
+                                    return Err(kill_error.into());
+                                }
+                            }
+                            child.wait().context("Unable to reap unresponsive agent")?;
+                            bail!(
+                                "Agent did not become ready within 6 seconds; inspect {}",
+                                log_path.display()
+                            );
+                        }
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            bail!("Agent did not become ready; inspect {}", log_path.display());
+            };
+            println!(
+                "Agent started (PID {}). Log: {}",
+                snapshot["pid"],
+                log_path.display()
+            );
         }
         Command::Status { json } => match ControlClient::open(dir)? {
-            None => {
-                let status = json!({"running": false, "state": "stopped"});
-                if *json {
-                    println!("{}", pretty(&status)?);
-                } else {
-                    println!("Desktop Commander is not running");
+            None => stopped_status(*json)?,
+            Some(client) => match local_status(&client, dir).await? {
+                (None, Some(_lock)) => stopped_status(*json)?,
+                (Some(mut status), None) => {
+                    if *json {
+                        status["running"] = json!(true);
+                        println!("{}", pretty(&status)?);
+                    } else {
+                        print_status(&status);
+                    }
                 }
-            }
-            Some(client) => {
-                let mut status = client.status().await?;
-                if *json {
-                    status["running"] = json!(true);
-                    println!("{}", pretty(&status)?);
-                } else {
-                    print_status(&status);
-                }
-            }
+                _ => unreachable!("local status result invariant"),
+            },
         },
         Command::Connect | Command::Disconnect | Command::Quit | Command::Diagnostics => {
             let client = online(dir).await?;
@@ -300,11 +375,15 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
         }
         Command::Settings { action } => {
             let client = ControlClient::open(dir)?;
-            let (mut data, connected) = if let Some(client) = &client {
-                let snapshot = client.status().await?;
-                (snapshot["settings"].clone(), true)
+            let (mut data, connected, _offline_lock) = if let Some(client) = &client {
+                match local_status(client, dir).await? {
+                    (None, Some(lock)) => (serde_json::to_value(offline_settings(dir)?)?, false, Some(lock)),
+                    (Some(snapshot), None) => (snapshot["settings"].clone(), true, None),
+                    _ => unreachable!("local status result invariant"),
+                }
             } else {
-                (serde_json::to_value(offline_settings(dir)?)?, false)
+                let lock = instance_lock(dir)?.context("Agent is starting; retry the command")?;
+                (serde_json::to_value(offline_settings(dir)?)?, false, Some(lock))
             };
             match action {
                 SettingsAction::Show { json } => {
@@ -354,7 +433,15 @@ pub async fn run(command: &Command, dir: &Path) -> Result<()> {
         }
         Command::Logout => {
             if let Some(client) = ControlClient::open(dir)? {
-                client.request(Method::POST, "logout", None).await?;
+                let (_, stopped_lock) = local_status(&client, dir).await?;
+                if let Some(_lock) = stopped_lock {
+                    let session = dir.join("session.json");
+                    if session.exists() {
+                        std::fs::remove_file(session)?;
+                    }
+                } else {
+                    client.request(Method::POST, "logout", None).await?;
+                }
             } else {
                 // No agent owns the instance; delete only the credential file.
                 let app = crate::app::App::load(dir.to_owned())?;
