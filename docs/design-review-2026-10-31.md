@@ -1,6 +1,6 @@
 # 程序设计与实现检查
 
-检查基准：`86c5000f95e1e804108049276e7195fc85583797` 的 Rust 后端、Flutter 界面与构建脚本。以下问题来自代码审查；涉及网络异常、磁盘写入失败和资源耗尽的场景尚未进行故障注入。严重程度按照远程操作可靠性、文件完整性和资源占用评估。
+检查基准：`86c5000f95e1e804108049276e7195fc85583797` 的 Rust 后端、Flutter 界面与构建脚本。问题依据为代码审查，以及单独标注的实机观察；涉及网络异常、磁盘写入失败和资源耗尽的场景尚未进行故障注入。严重程度按照远程操作可靠性、文件完整性和资源占用评估。
 
 ## 高优先级
 
@@ -77,8 +77,20 @@
 - 影响：后台重启后界面看不到之前的调用；同名命令难以区分，失败记录缺少可查看的错误摘要，也无法按调用编号关联远程结果。
 - 建议：从有上限的持久历史恢复界面列表，增加调用编号和经过脱敏的错误摘要，并支持筛选与详情。原始命令和凭证内容不应直接进入列表记录。
 
+## 实机观察补充
+
+### 11. 高优先级：Mac 令牌过期后持续重连，睡眠可能推迟刷新
+
+- 实际观察：2026-10-31 的 macOS 后台进程仍在运行，状态持续为 `reconnecting`，错误为 `InvalidJWTToken: Token has expired 3491 seconds ago`，远程设备已离线约两小时。通过现有 CLI 执行 `disconnect`、`connect` 后，同一后台进程恢复在线，真实远程命令成功，凭证文件保留。
+- 代码：[remote.rs](../src/remote.rs#L47-L56)、[remote.rs](../src/remote.rs#L216-L219)、[remote.rs](../src/remote.rs#L283-L288)。访问令牌刷新由 `Instant` 的 45 分钟截止时间控制；重连时如果该时间尚未到达，就继续使用现有令牌。
+- 平台依据：[Rust 1.90 标准库](https://github.com/rust-lang/rust/blob/1.90.0/library/std/src/sys/pal/unix/time.rs#L240-L257) 的 Apple 实现使用睡眠期间停止计时的 `CLOCK_UPTIME_RAW`；[Rust 文档](https://doc.rust-lang.org/std/time/struct.Instant.html) 也说明 `Instant` 不保证将系统挂起计入经过时间。
+- 根因推断：设备睡眠期间，服务器上的令牌有效期继续消耗，本地刷新倒计时暂停，唤醒后可能携带过期令牌反复重连。这个推断得到源码和平台实现支持，但本次没有取得睡眠前后的完整计时记录，尚未通过睡眠故障复现确认。
+- 建议：根据授权服务返回的有效期判断令牌是否需要刷新；唤醒或收到过期拒绝时完成刷新，再建立连接。网络重连等待与令牌有效期需要分别处理。
+
 ## 时间显示
 
 调用记录继续由 Rust 保存 UTC。Flutter 使用 Dart 的 [`DateTime.parse`](https://api.dart.dev/dart-core/DateTime/parse.html) 和 [`toLocal`](https://api.dart.dev/dart-core/DateTime/toLocal.html)，以界面进程所在设备的系统时区转换，偏移量取调用发生时的 [`timeZoneOffset`](https://api.dart.dev/dart-core/DateTime/timeZoneOffset.html)。显示格式为 `完成于 yyyy-MM-dd HH:mm:ss.SSS UTC±HH:mm`。
 
 真实记录验证入口为 `scripts/live_call_time_e2e.py`，使用独立的 Python 日期实现计算预期值，启动与生产界面使用相同代码的 Flutter 程序，检查真实 Rust 后台记录在界面中的文本；不会写入调用记录或替换管理接口响应。
+
+界面实现 `15485cfe091a96e7ab42364ed0865e135a652516` 已通过四个平台的 [GitHub Actions 检查](https://github.com/kongjianguan/desktop-commander-rust/actions/runs/41202607836)。macOS 的真实调用记录已完成 `Asia/Shanghai`、`UTC`、`America/St_Johns` 和 `Asia/Kathmandu` 四个进程时区的端到端验证，同一条记录正确显示 `UTC+08:00`、`UTC+00:00`、`UTC-02:30` 和 `UTC+05:45`，后台 UTC 值保持不变。macOS 与 Windows 已安装本次界面产物，并验证打开、关闭、重新打开及后台继续运行。
