@@ -20,11 +20,15 @@ Future<void> main() async {
     throw StateError('The actual Remote agent must be online');
   }
   runApp(const CommanderApp());
-  final texts = <String>{};
+  Element? matchedRow;
   ScrollableState? scrollable;
   void collect(Element element) {
     final widget = element.widget;
-    if (widget is Text && widget.data != null) texts.add(widget.data!);
+    if (widget is ListTile && widget.title is Text && widget.subtitle is Text &&
+        (widget.title as Text).data == event['toolName'] &&
+        (widget.subtitle as Text).data == expected) {
+      matchedRow = element;
+    }
     if (element is StatefulElement && element.state is ScrollableState) {
       final state = element.state as ScrollableState;
       if (state.position.axis == Axis.vertical) scrollable = state;
@@ -34,17 +38,30 @@ Future<void> main() async {
   final deadline = DateTime.now().add(const Duration(seconds: 30));
   while (DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 200));
-    texts.clear();
+    matchedRow = null;
     final root = WidgetsBinding.instance.rootElement;
     if (root != null) collect(root);
-    if (texts.contains(expected) && texts.contains(event['toolName'])) break;
+    if (matchedRow != null) break;
     final position = scrollable?.position;
     if (position != null && position.hasContentDimensions) {
       position.jumpTo(position.maxScrollExtent);
     }
   }
-  if (!texts.contains(expected) || !texts.contains(event['toolName'])) {
+  final row = matchedRow;
+  if (row == null) {
     throw StateError('Live call was not rendered with the expected local time: $expected');
+  }
+  await Scrollable.ensureVisible(row, alignment: 0.5,
+      duration: const Duration(milliseconds: 200));
+  await WidgetsBinding.instance.endOfFrame;
+  final box = row.findRenderObject();
+  if (box is! RenderBox || !box.hasSize) {
+    throw StateError('Live call row has no rendered layout');
+  }
+  final view = View.of(row);
+  final viewport = Offset.zero & (view.physicalSize / view.devicePixelRatio);
+  if (!viewport.contains(box.localToGlobal(box.size.center(Offset.zero)))) {
+    throw StateError('Live call row did not scroll into the visible viewport');
   }
   final after = await api.request('GET', '/status');
   final current = (after['events'] as List).cast<Map<String, dynamic>>()
@@ -56,7 +73,7 @@ Future<void> main() async {
     'passed': true, 'backendPid': before['pid'], 'backendOnline': true,
     'toolName': event['toolName'], 'sourceTimestamp': timestamp,
     'displayedText': expected, 'processTimezone': Platform.environment['TZ'],
-    'sourceTimestampUnchanged': true,
+    'sourceTimestampUnchanged': true, 'matchingRowVisible': true,
   }));
   api.close();
   exit(0);
