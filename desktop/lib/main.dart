@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'api.dart';
+import 'call_time.dart';
 
 void main() => runApp(const CommanderApp());
 
@@ -222,7 +223,8 @@ class _ControlPanelState extends State<ControlPanel> {
               ...events.map((dynamic value) { final event = value as Map;
                 return ListTile(contentPadding: EdgeInsets.zero,
                   leading: Icon(event['success'] == true ? Icons.check_circle_outline : Icons.error_outline),
-                  title: Text(event['toolName'] as String), subtitle: Text(event['timestamp'] as String),
+                  title: Text(event['toolName'] as String),
+                  subtitle: Text('完成于 ${formatCallTime(event['timestamp'] as String)}'),
                   trailing: Text('${event['durationMs']} ms')); }),
             ])),
             const Text('关闭管理窗口后，远程连接继续运行。通过状态栏菜单可以再次打开窗口。'),

@@ -7,6 +7,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  intl: 0.20.2
   window_manager: 0.5.1
 dev_dependencies:
   integration_test:

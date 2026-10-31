@@ -132,6 +132,17 @@ jobs:
       - name: Verify packaged tray and Flutter lifecycle on Linux
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run -a python scripts/linux_desktop.py python scripts/tray_e2e.py
+      - name: Build live call-time E2E application
+        if: matrix.target == 'aarch64-apple-darwin'
+        working-directory: desktop
+        run: |
+          flutter build macos --release --target integration_test/live_call_time.dart
+          tar -czf ../.work/live-call-time-e2e-macos.tar.gz -C build/macos/Build/Products/Release .
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'aarch64-apple-darwin'
+        with:
+          name: live-call-time-e2e-macos
+          path: .work/live-call-time-e2e-macos.tar.gz
       - uses: actions/upload-artifact@v4
         if: always()
         with:
